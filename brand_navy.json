@@ -1,0 +1,21 @@
+{
+  "CTk":            {"fg_color": ["#13203A", "#13203A"]},
+  "CTkToplevel":    {"fg_color": ["#13203A", "#13203A"]},
+  "CTkFrame":       {"corner_radius": 14, "border_width": 1, "fg_color": ["#1F3050", "#1F3050"], "top_fg_color": ["#243A60", "#243A60"], "border_color": ["#2C4068", "#2C4068"]},
+  "CTkButton":      {"corner_radius": 10, "border_width": 0, "fg_color": ["#1B2A4A", "#1B2A4A"], "hover_color": ["#24375E", "#24375E"], "border_color": ["#B8932E", "#B8932E"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkLabel":       {"corner_radius": 0, "fg_color": "transparent", "text_color": ["#EAF0F8", "#EAF0F8"]},
+  "CTkEntry":       {"corner_radius": 10, "border_width": 2, "fg_color": ["#16233D", "#16233D"], "border_color": ["#2C4068", "#2C4068"], "text_color": ["#EAF0F8", "#EAF0F8"], "placeholder_text_color": ["#6E7C93", "#6E7C93"]},
+  "CTkCheckBox":    {"corner_radius": 6, "border_width": 3, "fg_color": ["#B8932E", "#B8932E"], "border_color": ["#2C4068", "#2C4068"], "hover_color": ["#CCA53A", "#CCA53A"], "checkmark_color": ["#13203A", "#13203A"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkSwitch":      {"corner_radius": 1000, "border_width": 3, "button_length": 0, "fg_color": ["#2C4068", "#2C4068"], "progress_color": ["#B8932E", "#B8932E"], "button_color": ["#EAF0F8", "#EAF0F8"], "button_hover_color": ["#FFFFFF", "#FFFFFF"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkRadioButton": {"corner_radius": 1000, "border_width_checked": 6, "border_width_unchecked": 3, "fg_color": ["#B8932E", "#B8932E"], "border_color": ["#2C4068", "#2C4068"], "hover_color": ["#CCA53A", "#CCA53A"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkProgressBar": {"corner_radius": 1000, "border_width": 0, "fg_color": ["#16233D", "#16233D"], "progress_color": ["#B8932E", "#B8932E"], "border_color": ["#2C4068", "#2C4068"]},
+  "CTkSlider":      {"corner_radius": 1000, "button_corner_radius": 1000, "border_width": 6, "button_length": 0, "fg_color": ["#2C4068", "#2C4068"], "progress_color": ["#B8932E", "#B8932E"], "button_color": ["#EAF0F8", "#EAF0F8"], "button_hover_color": ["#FFFFFF", "#FFFFFF"]},
+  "CTkOptionMenu":  {"corner_radius": 10, "fg_color": ["#1B2A4A", "#1B2A4A"], "button_color": ["#24375E", "#24375E"], "button_hover_color": ["#2C4068", "#2C4068"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkComboBox":    {"corner_radius": 10, "border_width": 2, "fg_color": ["#16233D", "#16233D"], "border_color": ["#2C4068", "#2C4068"], "button_color": ["#2C4068", "#2C4068"], "button_hover_color": ["#B8932E", "#B8932E"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkScrollbar":   {"corner_radius": 1000, "border_spacing": 4, "fg_color": "transparent", "button_color": ["#2C4068", "#2C4068"], "button_hover_color": ["#3A537F", "#3A537F"]},
+  "CTkSegmentedButton": {"corner_radius": 10, "border_width": 2, "fg_color": ["#16233D", "#16233D"], "selected_color": ["#B8932E", "#B8932E"], "selected_hover_color": ["#CCA53A", "#CCA53A"], "unselected_color": ["#16233D", "#16233D"], "unselected_hover_color": ["#24375E", "#24375E"], "text_color": ["#EAF0F8", "#EAF0F8"], "text_color_disabled": ["#6E7C93", "#6E7C93"]},
+  "CTkTextbox":     {"corner_radius": 10, "border_width": 1, "fg_color": ["#0E1830", "#0E1830"], "border_color": ["#2C4068", "#2C4068"], "text_color": ["#CFE0F5", "#CFE0F5"], "scrollbar_button_color": ["#2C4068", "#2C4068"], "scrollbar_button_hover_color": ["#3A537F", "#3A537F"]},
+  "CTkScrollableFrame": {"label_fg_color": ["#243A60", "#243A60"]},
+  "DropdownMenu":   {"fg_color": ["#1F3050", "#1F3050"], "hover_color": ["#24375E", "#24375E"], "text_color": ["#EAF0F8", "#EAF0F8"]},
+  "CTkFont":        {"macOS": {"family": "SF Display", "size": 13, "weight": "normal"}, "Windows": {"family": "Microsoft JhengHei UI", "size": 14, "weight": "normal"}, "Linux": {"family": "Roboto", "size": 13, "weight": "normal"}}
+}
