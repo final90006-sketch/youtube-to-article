@@ -10,6 +10,7 @@
 - 產出：`article.md`（原稿）＋ `article.html`（navy/gold 精緻閱讀版，時間碼可點回原片該秒）＋ 逐字稿。
 - 額外自動產：**一頁精華卡 `digest.html`**、**章節心智圖 `mindmap.html`**、**自測翻牌卡 `quiz.html`**（都是離線單檔）。
 - 全部歸進 `桌面\YT影片文章\` 的可搜尋知識總覽首頁。
+- **不只影片**：本機 **PDF／網頁文章／Markdown／Word** 也能進同一條管線（`fetch_document.py`），支援多檔合併（`--merge`）與敏感內容標記（`--private`：不進知識庫、不外送）。同樣產出精讀閱讀版與衍生卡片。
 
 ---
 

@@ -35,21 +35,7 @@ for _s in ("stdout", "stderr"):
     except Exception:
         pass
 
-TS_PAT = r"\[(\d{1,2}:\d{2}(?::\d{2})?)\]"
-
-
-def ts_to_seconds(ts):
-    parts = [int(p) for p in ts.split(":")]
-    if len(parts) == 3:
-        return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    return parts[0] * 60 + parts[1]
-
-
-def hms(seconds):
-    seconds = int(seconds or 0)
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+from common import TS_PAT, SRC_MAP_HERO, ts_to_seconds, hms  # noqa: E402（P0-3 常數收斂）
 
 
 def strip_md(t):
@@ -164,6 +150,7 @@ def md_to_html(md, video_url):
     toc = []
     doc_title = None
     n_insights = 0
+    n_h2_normal = 0          # kind==normal 的 h2 數（document 型 stats 用；av 不看這個）
     sec_no = 0
     i, n = 0, len(lines)
     para = []
@@ -284,6 +271,7 @@ def md_to_html(md, video_url):
                     i = j
                     continue
 
+                n_h2_normal += 1
                 out.append(f'<h2 id="{sid}">{inline(raw)}</h2>')
                 i += 1
                 continue
@@ -345,7 +333,8 @@ def md_to_html(md, video_url):
     chars = len(re.sub(r"\s+", "", plain))
     read_min = max(1, round(chars / 450))
     n_chapters = sum(1 for t in toc if t["secs"] is not None)
-    stats = {"read_min": read_min, "n_chapters": n_chapters, "n_insights": n_insights}
+    stats = {"read_min": read_min, "n_chapters": n_chapters, "n_insights": n_insights,
+             "n_h2_normal": n_h2_normal}
     return "\n".join(out), toc, stats, doc_title
 
 
@@ -727,8 +716,7 @@ def fmt_upload_date(d):
 
 
 def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, video_url, doc_title=None):
-    src_map = {"manual": "人工字幕", "auto": "自動字幕（原語）", "auto-translated": "自動翻譯字幕",
-               "whisper": "語音辨識（Whisper）"}
+    is_doc = (meta.get("type") or "av") == "document"   # schema v2：缺欄位＝av
     title = html.escape(str(doc_title or meta.get("title", "影片文章")))
 
     meta_bits = []
@@ -739,7 +727,8 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
     if fmt_upload_date(meta.get("upload_date")):
         meta_bits.append(f'<span><b>發布</b> {fmt_upload_date(meta.get("upload_date"))}</span>')
     if track.get("source"):
-        meta_bits.append(f'<span><b>字幕</b> {src_map.get(track["source"], track["source"])}</span>')
+        src_label = "來源" if is_doc else "字幕"
+        meta_bits.append(f'<span><b>{src_label}</b> {SRC_MAP_HERO.get(track["source"], track["source"])}</span>')
     if video_url:
         is_yt = ("youtube.com" in video_url) or ("youtu.be" in video_url)
         link_label = "在 YouTube 觀看 ↗" if is_yt else "開啟原始連結 ↗"
@@ -758,6 +747,12 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
 
     data_json = json.dumps({"md": md_raw, "vid": meta.get("id", ""), "video_url": video_url},
                            ensure_ascii=False).replace("</", "<\\/")
+
+    # 文檔型（type=document）字樣分流；av 全維持原字面值（零回歸）
+    kicker = "文檔精讀" if is_doc else "影片轉文章 · 逐節精讀"
+    n_chapters = stats["n_h2_normal"] if is_doc else stats["n_chapters"]
+    footer = ("本文由「影片轉文章」技能依原文整理生成 · 內容以原文為準" if is_doc else
+              "本文由「影片轉文章」技能依字幕／語音辨識整理生成 · 內容以原片／原節目實際陳述為準 · 可點時間碼回看原片核對")
 
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant">
@@ -790,12 +785,12 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
   </aside>
   <main class="reading">
     <section class="hero">
-      <div class="kicker">影片轉文章 · 逐節精讀</div>
+      <div class="kicker">{kicker}</div>
       <h1 class="hero-title">{title}</h1>
       <div class="hero-meta">{"".join(meta_bits)}</div>
       <div class="stats">
         <div class="stat"><b>{stats["read_min"]}</b><span>分鐘閱讀</span></div>
-        <div class="stat"><b>{stats["n_chapters"]}</b><span>章節</span></div>
+        <div class="stat"><b>{n_chapters}</b><span>章節</span></div>
         <div class="stat"><b>{stats["n_insights"]}</b><span>重點洞察</span></div>
       </div>
     </section>
@@ -803,7 +798,7 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
 {body_html}
     </div>
     {transcript_html}
-    <footer class="doc">本文由「影片轉文章」技能依字幕／語音辨識整理生成 · 內容以原片／原節目實際陳述為準 · 可點時間碼回看原片核對</footer>
+    <footer class="doc">{footer}</footer>
   </main>
 </div>
 <script id="vtp-data" type="application/json">{data_json}</script>
@@ -825,7 +820,13 @@ def main():
     meta = data.get("meta", {})
     track = data.get("track", {})
     segments = data.get("segments", [])
-    video_url = meta.get("webpage_url") or (f"https://youtu.be/{meta.get('id')}" if meta.get("id") else "")
+    # 假連結雷（P0-2）：只有影音型且 id 是 YouTube 11 碼格式才允許 fallback 合成 youtu.be，
+    # document 型或非 YT id 一律空字串（別替 PDF/報告造出假影片連結）
+    video_url = meta.get("webpage_url") or ""
+    if not video_url and (meta.get("type") or "av") != "document":
+        _mid = str(meta.get("id") or "")
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", _mid):
+            video_url = f"https://youtu.be/{_mid}"
 
     body_html, toc, stats, doc_title = md_to_html(md, video_url)
     transcript_html = render_transcript(segments, video_url)

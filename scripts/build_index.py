@@ -29,21 +29,7 @@ for _s in ("stdout", "stderr"):
     except Exception:
         pass
 
-SRC_MAP = {"manual": "人工字幕", "auto": "自動字幕", "auto-translated": "自動翻譯",
-           "whisper": "語音辨識"}
-
-
-def _platform(url):
-    u = (url or "").lower()
-    if "youtube.com" in u or "youtu.be" in u:
-        return "▶ YouTube"
-    if any(k in u for k in ("podcasts.apple", "soundcloud", "firstory", "soundon", ".mp3", "rss")):
-        return "🎙 Podcast"
-    if "x.com" in u or "twitter.com" in u:
-        return "𝕏 貼文"
-    if "vimeo" in u:
-        return "▶ Vimeo"
-    return "▶ 影片"
+from common import SRC_MAP, platform_label  # noqa: E402（P0-3 常數收斂）
 
 
 def _dur_seconds(dur_str):
@@ -64,8 +50,13 @@ def load_entry(folder: Path, category: str, base: Path):
         data = json.loads(tj.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if data.get("ok") is False:      # 殘骸擋板（P0-3）：抓取失敗紀錄不入庫
+        return None
     meta = data.get("meta", {}) or {}
+    if meta.get("private"):          # 敏感分流（P0-4）：private 完全不入庫、不嵌內文
+        return None
     track = data.get("track", {}) or {}
+    doc_type = meta.get("type") or "av"   # schema v2：缺欄位＝av
     has_article = (folder / "article.html").exists()
     target = (folder / "article.html") if has_article else tj
     rel = os.path.relpath(str(target), str(base)).replace("\\", "/")
@@ -91,13 +82,14 @@ def load_entry(folder: Path, category: str, base: Path):
 
     return {
         "category": category,
+        "type": doc_type,
         "title": meta.get("title") or folder.name,
         "channel": meta.get("channel") or "",
         "duration": meta.get("duration_str") or "",
         "dur_sec": _dur_seconds(meta.get("duration_str")),
         "source": track.get("source") or "",
         "url": meta.get("webpage_url") or "",
-        "platform": _platform(meta.get("webpage_url")),
+        "platform": platform_label(meta.get("webpage_url"), doc_type, track.get("source")),
         "date": (f"{up[0:4]}-{up[4:6]}-{up[6:8]}" if len(up) == 8 else ""),
         "href": rel,
         "done": has_article,
@@ -309,8 +301,9 @@ def build_html(entries, base):
         items = sorted(cats[cat], key=lambda x: x["mtime"], reverse=True)
         cards = []
         for e in items:
+            pend = "文章待寫" if e.get("type") == "document" else "逐字稿待寫"
             badge = ('<span class="badge done">已完成</span>' if e["done"]
-                     else '<span class="badge pend">逐字稿待寫</span>')
+                     else f'<span class="badge pend">{pend}</span>')
             src = SRC_MAP.get(e["source"], e["source"])
             meta_bits = [b for b in [
                 html.escape(e["platform"]),

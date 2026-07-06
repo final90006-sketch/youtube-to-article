@@ -23,7 +23,11 @@ import threading
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SKILL_DIR / "scripts"))
+from common import TS_PAT, TS_PAT3, hms  # noqa: E402（P0-3 常數收斂）
+
 FETCH = SKILL_DIR / "scripts" / "fetch_transcript.py"
+FETCH_DOC = SKILL_DIR / "scripts" / "fetch_document.py"   # 文檔進料口（P0-1）
 RENDER = SKILL_DIR / "scripts" / "render_html.py"
 INDEX = SKILL_DIR / "scripts" / "build_index.py"
 EXPORT = SKILL_DIR / "scripts" / "export_formats.py"
@@ -88,6 +92,17 @@ def run_fetch(url, lang=None, model=None, base=None, log=lambda s: None, ctrl=No
     if model:
         cmd += ["--whisper-model", model]
     log("正在連線 …")
+    return _run_fetch_cmd(cmd, log, ctrl)
+
+
+def run_fetch_document(path, base=None, log=lambda s: None, ctrl=None):
+    """本機文檔進料（P0-1）：fetch_document.py 抽正文成同 schema 的 transcript.json。"""
+    cmd = [PY, str(FETCH_DOC), path, "--base", str(base or BASE)]
+    log("正在讀取文檔 …")
+    return _run_fetch_cmd(cmd, log, ctrl)
+
+
+def _run_fetch_cmd(cmd, log, ctrl):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace",
                             creationflags=NO_WINDOW, bufsize=1)
@@ -121,9 +136,34 @@ def run_fetch(url, lang=None, model=None, base=None, log=lambda s: None, ctrl=No
     return info
 
 
-def build_writer_prompt(meta, transcript_txt, mode, is_asr):
+def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False):
     title = meta.get("title", "")
     channel = meta.get("channel", "")
+    if doc:
+        # type=document 變體（P0-2）：無秒級時間軸→不要求時間碼；標題契約／洞察／行動／金句／自我檢核照舊
+        return (
+            "你是把長篇文檔『精讀』成一篇繁體中文長文的編輯。立場是精讀、不是摘要：寧長毋短、寧詳毋略。\n\n"
+            "鐵則：\n"
+            "1. 忠實不杜撰：只寫原文寫過的；不補外部知識、不臆測。作者意見寫『作者主張／作者認為』。\n"
+            "2. 完整保留細節（對抗摘要太短）：每個論點、例子、數據、步驟、推理、轉折都要落進文章；沒讀過原文的人讀完能掌握約 95% 實質內容。\n"
+            "3. 不是逐字貼：去掉冗詞與重複，重組成通順書面段落，但資訊點一個都不能少。\n"
+            "4. 繁體中文輸出；原文非中文就忠實翻譯，專有名詞／人名／書名首次出現括號附原文。\n"
+            "5. 不截斷：絕不用『（後略）』『以下省略』；長就寫完整部。\n\n"
+            "結構（務必照用這些標題字串，程式會自動做成卡片／清單；emoji 要保留）：\n"
+            "# 標題（用下方提供的標題）\n"
+            "## 💡 重點洞察  → 3–6 條『一句話』洞察，每條一個「- 」\n"
+            "## ⚡ 可應用 / 帶得走的行動  → 3–8 條『明天就能做』的具體可執行行動，每條「- 」\n"
+            "---\n"
+            "## 章節標題  → 依原文結構分節（一節一主題）；重要原話用「> 引言」\n"
+            "## ❝ 金句  → 3–5 句最有力的原話，每句一行「> 引言」\n"
+            "## 🧠 自我檢核  → 選用：3–6 題，每行『- 問題？｜答案』（用全形｜分隔），給讀者複習\n"
+            "## 關鍵結論 / 名詞解釋  → 視內容加\n\n"
+            "正文可用強調框：> [!key] 重點 / > [!warn] 注意 / > [!note] 提示。\n"
+            f"深度：{mode}（逐節精讀＝最完整；快覽＝只洞察＋行動＋各章兩三句；逐字精修＝接近原文、整理標點與分段）。\n"
+            "\n只輸出 Markdown 本文，第一個字元就是「#」。不要任何前言、結語、解說，也不要用 ``` 圍欄。\n\n"
+            f"標題：{title}\n來源／作者：{channel}\n\n"
+            "==== 以下為文檔原文 ====\n" + transcript_txt
+        )
     asr_note = ("（這支影片／這集 Podcast 沒有字幕，逐字稿由語音辨識產生，可能有錯字／斷句錯：請在文章開頭用一句 "
                 "> [!warn] 註明，並對明顯口誤合理修正但不改變原意）\n" if is_asr else "")
     return (
@@ -232,9 +272,7 @@ CHUNK_MAX = 24                    # 上限塊數（放寬以容納超長片如 4
 
 
 def _fmt_t(sec):
-    sec = max(0, int(sec or 0))
-    h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+    return hms(max(0, int(sec or 0)))    # 格式同 common.hms；負值夾零（沿用原行為）
 
 
 def _segs_to_text(segs):
@@ -245,7 +283,7 @@ def _segments_from_txt(ttxt):
     """transcript.json 沒有可用 segments 時，從 transcript.txt 的 [時間碼] 行還原 pseudo-segments，讓長片仍能分塊。"""
     segs = []
     for line in (ttxt or "").splitlines():
-        m = re.match(r"^\s*\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]\s*(.*)$", line)
+        m = re.match(r"^\s*" + TS_PAT3 + r"\s*(.*)$", line)
         if not m:
             continue
         a, b, c, txt = m.groups()
@@ -347,8 +385,9 @@ def _validate_body(a):
     return None if "##" in a else "INCOMPLETE"
 
 
-def _make_body_validator(chunk_chars):
-    """每塊正文的確定性 QA 門（第一層 lint，毫秒級零成本）：結構／佔位／時間碼／份量樓地板。"""
+def _make_body_validator(chunk_chars, doc=False):
+    """每塊正文的確定性 QA 門（第一層 lint，毫秒級零成本）：結構／佔位／時間碼／份量樓地板。
+       doc=True（type=document）：文檔無秒級時間軸，跳過 NOTIME 檢查（P0-2）。"""
     floor = max(150, int(chunk_chars * 0.10))       # 寧長毋短：低於該塊逐字稿 10% 視為偷懶摘要
 
     def validate(a):
@@ -358,7 +397,7 @@ def _make_body_validator(chunk_chars):
             return "INCOMPLETE"
         if _find_placeholders(a):
             return "PLACEHOLDER"
-        if not re.search(r"\[\d{1,2}:\d{2}(?::\d{2})?\]", a):
+        if not doc and not re.search(TS_PAT, a):
             return "NOTIME"
         if len(a) < floor:
             return "SHORT"
@@ -445,9 +484,10 @@ def _fail_log(out, problem, raw, err, rc, log, ctrl):
         log("  " + combined.replace("\n", " ")[:200])
 
 
-def _write_quality_report(out, article, chunks, ttxt, mode, log):
+def _write_quality_report(out, article, chunks, ttxt, mode, log, doc=False):
     """產後完整性審計（確定性、零 LLM）：佔位／長度比／各塊時間覆蓋／時間碼單調性 → _quality_report.txt。
-       只回報不擋交付；審計本身出錯絕不能中斷流程。"""
+       只回報不擋交付；審計本身出錯絕不能中斷流程。
+       doc=True（type=document）：無秒級時間軸，跳過時間碼單調性／覆蓋審查（P0-2）。"""
     try:
         lines, warns = [], 0
         ph = _find_placeholders(article)
@@ -462,26 +502,30 @@ def _write_quality_report(out, article, chunks, ttxt, mode, log):
             lines.append(f"[{'OK' if ok else 'WARN'}] 文章/逐字稿長度比 {ratio:.2f}（樓地板 0.35）")
             if not ok:
                 warns += 1
-        ts = [(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))) if m.group(3)
-              else (int(m.group(1)) * 60 + int(m.group(2)))
-              for m in re.finditer(r"\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]", article)]
-        if len(ts) >= 2:
-            inv = sum(1 for a, b in zip(ts, ts[1:]) if b < a - 120)   # 容忍 2 分鐘內回指
-            frac = inv / (len(ts) - 1)
-            ok = frac <= 0.15
-            lines.append(f"[{'OK' if ok else 'WARN'}] 時間碼單調性：{len(ts)} 個、倒退比 {frac:.0%}（容忍 15%）")
-            if not ok:
-                warns += 1
-        for i, seg in enumerate(chunks or [], 1):    # 時間碼覆蓋審計：每塊時間範圍都要有對應時間碼
-            tt = [s.get("t") or 0 for s in seg if s.get("text")]
-            if not tt:
-                continue
-            t0, t1 = min(tt), max(tt)
-            hit = any(t0 - 60 <= x <= t1 + 60 for x in ts)
-            lines.append(f"[{'OK' if hit else 'WARN'}] 第 {i} 塊（{_fmt_t(t0)}–{_fmt_t(t1)}）{'有' if hit else '無'}對應時間碼")
-            if not hit:
-                warns += 1
-        head = ("完整性審計：" + ("全部通過" if warns == 0 else f"{warns} 項警告") + "\n" + "-" * 40 + "\n")
+        if doc:
+            lines.append("[SKIP] type=document：無秒級時間軸，略過時間碼單調性／覆蓋審查")
+        else:
+            ts = [(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))) if m.group(3)
+                  else (int(m.group(1)) * 60 + int(m.group(2)))
+                  for m in re.finditer(TS_PAT3, article)]
+            if len(ts) >= 2:
+                inv = sum(1 for a, b in zip(ts, ts[1:]) if b < a - 120)   # 容忍 2 分鐘內回指
+                frac = inv / (len(ts) - 1)
+                ok = frac <= 0.15
+                lines.append(f"[{'OK' if ok else 'WARN'}] 時間碼單調性：{len(ts)} 個、倒退比 {frac:.0%}（容忍 15%）")
+                if not ok:
+                    warns += 1
+            for i, seg in enumerate(chunks or [], 1):    # 時間碼覆蓋審計：每塊時間範圍都要有對應時間碼
+                tt = [s.get("t") or 0 for s in seg if s.get("text")]
+                if not tt:
+                    continue
+                t0, t1 = min(tt), max(tt)
+                hit = any(t0 - 60 <= x <= t1 + 60 for x in ts)
+                lines.append(f"[{'OK' if hit else 'WARN'}] 第 {i} 塊（{_fmt_t(t0)}–{_fmt_t(t1)}）{'有' if hit else '無'}對應時間碼")
+                if not hit:
+                    warns += 1
+        head = ("完整性審計" + ("（type=document）" if doc else "") + "："
+                + ("全部通過" if warns == 0 else f"{warns} 項警告") + "\n" + "-" * 40 + "\n")
         (out / "_quality_report.txt").write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
         if warns:
             log(f"  ⚠ 完整性審計：{warns} 項警告（詳見 _quality_report.txt）")
@@ -491,7 +535,7 @@ def _write_quality_report(out, article, chunks, ttxt, mode, log):
         pass
 
 
-def _finish_article(out, article, ttxt, mode, log, chunks=None):
+def _finish_article(out, article, ttxt, mode, log, chunks=None, doc=False):
     """共用收尾：截斷警告 + 寫 article.md + 完整性審計 + 渲染 + 衍生格式 + render/write 分離回報。"""
     if mode != "快覽" and len(ttxt) > 0 and len(article) < 0.35 * len(ttxt):
         log(f"  ⚠ 注意：文章長度（{len(article):,}）明顯短於逐字稿（{len(ttxt):,}），疑似被截斷或過簡，請開檔檢查是否完整。")
@@ -504,7 +548,7 @@ def _finish_article(out, article, ttxt, mode, log, chunks=None):
             pass
         log(f"✗ 寫入 article.md 失敗：{e}")
         return False
-    _write_quality_report(out, article, chunks, ttxt, mode, log)
+    _write_quality_report(out, article, chunks, ttxt, mode, log, doc=doc)
     log(f"  已產出文章（{len(article):,} 字），渲染中…")
     r = subprocess.run([PY, str(RENDER), "--md", str(out / "article.md"),
                         "--json", str(out / "transcript.json"), "--out", str(out / "article.html")],
@@ -546,7 +590,19 @@ def _with_heartbeat(log, fn):
         stop.set()
 
 
-def _prompt_frame(meta, full_ttxt, mode, is_asr):
+def _prompt_frame(meta, full_ttxt, mode, is_asr, doc=False):
+    if doc:
+        # type=document 變體（P0-2）：切塊提示語不提時間碼
+        return (
+            "你是把長篇文檔精讀成繁體中文長文的編輯。這一步【只輸出文章的開頭框架】，不要寫章節正文。\n"
+            "嚴格只輸出以下三段，第一個字元就是「#」：\n"
+            "# 標題（用下方提供的標題）\n"
+            "## 💡 重點洞察  → 3–6 條一句話洞察，每條「- 」\n"
+            "## ⚡ 可應用 / 帶得走的行動  → 3–8 條具體可執行行動，每條「- 」\n"
+            "最後輸出一行「---」。不要章節正文、不要金句、不要解說、不要 ``` 圍欄。\n"
+            f"標題：{meta.get('title', '')}\n來源／作者：{meta.get('channel', '')}\n\n"
+            "==== 文檔全文（供你綜觀全局）====\n" + full_ttxt
+        )
     asr = "（逐字稿由語音辨識產生，可能有錯字，合理修正但不改原意）\n" if is_asr else ""
     return (
         "你是把長影片逐字稿精讀成繁體中文長文的編輯。這一步【只輸出文章的開頭框架】，不要寫章節正文。\n"
@@ -560,7 +616,27 @@ def _prompt_frame(meta, full_ttxt, mode, is_asr):
     )
 
 
-def _prompt_body(meta, chunk_ttxt, mode, is_asr, idx, total, outline="", rng=("", ""), prev=""):
+def _prompt_body(meta, chunk_ttxt, mode, is_asr, idx, total, outline="", rng=("", ""), prev="", doc=False):
+    if doc:
+        # type=document 變體（P0-2）：切塊提示語不提時間碼、不要求時間範圍
+        ctx = ""
+        if outline:
+            ctx += f"全文章節大綱（覆蓋契約，供你定位本段在全文的位置）：{outline}\n"
+        if prev:
+            ctx += f"（銜接參考）上一段正文的結尾：「…{prev}」——請自然銜接、不要重複已寫過的內容。\n"
+        return (
+            f"你正在精讀一篇長文檔的第 {idx}/{total} 段原文，產出這一段對應的【章節正文】。\n"
+            "鐵則：①忠實不杜撰、保留所有細節（步驟／數字／價格／工具／論證）、重組成通順書面段落、繁體中文。"
+            "②【嚴禁佔位搪塞】絕不可出現「見正文」「省略」「後續不在範圍」「內容中斷」「內容相同」等字樣——你負責的這段原文就是全部素材，一律寫完整、不截斷。"
+            "③【嚴禁杜撰人名】人名一律照原文；沒把握的名字寫「作者」，不可自創。\n"
+            + ctx +
+            "只輸出這一段的章節正文：用「## 章節標題」分節（一節一主題），"
+            "重要原話用「> 引言」，流程／比較可用條列或表格，可用 > [!key] / [!note] / [!warn] 強調框。\n"
+            "【不要】寫文章大標題(#)、不要重點洞察／帶得走／金句／自我檢核、不要「---」、不要前言結語、不要 ``` 圍欄；"
+            "第一個字元就是二級標題「##」。\n"
+            f"深度：{mode}。\n"
+            f"標題：{meta.get('title', '')}\n\n==== 第 {idx}/{total} 段原文 ====\n" + chunk_ttxt
+        )
     asr = "（語音辨識稿，可能有錯字，合理修正不改原意）\n" if is_asr else ""
     ctx = ""
     if outline:
@@ -584,7 +660,17 @@ def _prompt_body(meta, chunk_ttxt, mode, is_asr, idx, total, outline="", rng=(""
     )
 
 
-def _prompt_tail(meta, full_ttxt, mode, is_asr):
+def _prompt_tail(meta, full_ttxt, mode, is_asr, doc=False):
+    if doc:
+        # type=document 變體（P0-2）：不提時間碼
+        return (
+            "你是長篇文檔精讀編輯。這一步【只輸出文章結尾的綜整三節】，根據全文內容撰寫：\n"
+            "## ❝ 金句  → 3–5 句最有力的原話，每句一行「> 引言」\n"
+            "## 🧠 自我檢核  → 3–6 題，每行『- 問題？｜答案』（全形｜分隔）\n"
+            "## 名詞解釋 / 關鍵結論  → 視內容列幾條重要名詞或結論\n"
+            "只輸出這三節（第一個字元是「#」），不要重寫正文、不要文章大標題、不要解說、不要 ``` 圍欄。\n\n"
+            f"標題：{meta.get('title', '')}\n\n==== 文檔全文 ====\n" + full_ttxt
+        )
     return (
         "你是長影片精讀編輯。這一步【只輸出文章結尾的綜整三節】，根據全片內容撰寫：\n"
         "## ❝ 金句  → 3–5 句最有力的原話，每句一行「> 引言」，附 [時間碼]\n"
@@ -595,26 +681,27 @@ def _prompt_tail(meta, full_ttxt, mode, is_asr):
     )
 
 
-def _write_single(out, meta, ttxt, mode, is_asr, log, ctrl):
+def _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=False):
     log("Claude 正在撰寫精讀文章中…")
-    prompt = build_writer_prompt(meta, ttxt, mode, is_asr)
+    prompt = build_writer_prompt(meta, ttxt, mode, is_asr, doc=doc)
     article, problem, raw, err, rc = _with_heartbeat(
         log, lambda: _attempt_write(prompt, _validate_article, ctrl, log))
     if article is None:
         if problem != "CANCELLED":
             _fail_log(out, problem, raw, err, rc, log, ctrl)
         return False
-    return _finish_article(out, article, ttxt, mode, log)
+    return _finish_article(out, article, ttxt, mode, log, doc=doc)
 
 
-def _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl, chapters=None):
+def _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl, chapters=None, doc=False):
     n = len(chunks)
     outline = _chapter_outline(chapters)
     log(f"長片：分 {n} 段＋框架＋結尾多次撰寫（避免單次輸出截斷）…")
 
     def gen():
         # 1) 框架（全片）：標題 + 重點洞察 + 帶得走行動
-        fr, p, raw, err, rc = _attempt_write(_prompt_frame(meta, ttxt, mode, is_asr), _validate_article, ctrl, log)
+        fr, p, raw, err, rc = _attempt_write(_prompt_frame(meta, ttxt, mode, is_asr, doc=doc),
+                                             _validate_article, ctrl, log)
         if fr is None:
             return None, ("框架", p, raw, err, rc)
         # 2) 正文（逐塊；任一塊失敗就整體收斂，不產出殘缺文章）
@@ -625,15 +712,17 @@ def _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl, chapte
             log(f"  撰寫正文 {i}/{n} …")
             chunk_chars = sum(len(s.get("text", "")) for s in seg)
             prev_tail = bodies[-1][-300:] if bodies else ""      # 前文縫合：Map 的平行度＋Refine 的連貫性
+            # doc（F1）：pseudo-segments 無真時間軸，直接串接段落文字，不經 _segs_to_text 注入假 [0:00]
+            chunk_text = "\n".join(s["text"] for s in seg) if doc else _segs_to_text(seg)
             b, p, raw, err, rc = _attempt_write(
-                _prompt_body(meta, _segs_to_text(seg), mode, is_asr, i, n,
-                             outline=outline, rng=_chunk_range(seg), prev=prev_tail),
-                _make_body_validator(chunk_chars), ctrl, log)
+                _prompt_body(meta, chunk_text, mode, is_asr, i, n,
+                             outline=outline, rng=_chunk_range(seg), prev=prev_tail, doc=doc),
+                _make_body_validator(chunk_chars, doc=doc), ctrl, log)
             if b is None:
                 return None, (f"正文第 {i} 段", p, raw, err, rc)
             bodies.append(b.strip())
         # 3) 結尾（全片）：金句 + 自我檢核 + 名詞解釋（非必要，失敗就略過不擋全文）
-        tl, _, _, _, _ = _attempt_write(_prompt_tail(meta, ttxt, mode, is_asr), _validate_tail, ctrl, log)
+        tl, _, _, _, _ = _attempt_write(_prompt_tail(meta, ttxt, mode, is_asr, doc=doc), _validate_tail, ctrl, log)
         if not tl:
             log("  （結尾綜整：金句/自我檢核未產出，已略過，不影響正文完整）")
         head = fr.rstrip()
@@ -651,7 +740,7 @@ def _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl, chapte
             log(f"✗ 長片撰寫在「{where}」失敗。")
             _fail_log(out, problem, raw, err, rc, log, ctrl)
         return False
-    return _finish_article(out, article, ttxt, mode, log, chunks=chunks)
+    return _finish_article(out, article, ttxt, mode, log, chunks=chunks, doc=doc)
 
 
 def write_article_via_claude(out_dir, mode, log, ctrl=None):
@@ -662,6 +751,7 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
         log(f"✗ 讀逐字稿失敗：{e}")
         return False
     meta = data.get("meta", {})
+    doc = (meta.get("type") or "av") == "document"   # schema v2：缺欄位＝av（P0-2）
     is_asr = (data.get("track", {}) or {}).get("source") == "whisper"
     try:
         ttxt = (out / "transcript.txt").read_text(encoding="utf-8")
@@ -671,6 +761,9 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
     if mode != "快覽" and len(ttxt) > CHUNK_THRESHOLD_CHARS:
         segments = data.get("segments", [])
         chapters = data.get("chapters") or []
+        if doc and not segments:
+            # 長文檔（F1）：無時間軸 → transcript.txt 以空行切段造 pseudo-segments，仍走等字數分塊
+            segments = [{"t": 0, "text": p.strip()} for p in re.split(r"\n\s*\n", ttxt) if p.strip()]
         chunks = _split_by_chapters(chapters, segments, CHUNK_BODY_CHARS)   # 章節對齊優先：結構邊界硬切點
         how = "章節對齊"
         if len(chunks) < 2:                       # 無章節 → 等字數切
@@ -681,9 +774,11 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
             how = "txt還原"
         if len(chunks) >= 2:
             log(f"  切塊方式：{how}（{len(chunks)} 塊）")
-            return _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl, chapters=chapters)
-        log("  ⚠ 長片但無法分塊（逐字稿缺時間碼），改單次撰寫、可能被截斷，請開檔檢查完整性。")
-    return _write_single(out, meta, ttxt, mode, is_asr, log, ctrl)
+            return _write_long_article(out, meta, chunks, ttxt, mode, is_asr, log, ctrl,
+                                       chapters=chapters, doc=doc)
+        log("  ⚠ 長文檔但無法分塊（內文無空行段落結構），改單次撰寫、可能被截斷，請開檔檢查完整性。" if doc
+            else "  ⚠ 長片但無法分塊（逐字稿缺時間碼），改單次撰寫、可能被截斷，請開檔檢查完整性。")
+    return _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=doc)
 
 
 REASON_MSG = {
@@ -693,20 +788,54 @@ REASON_MSG = {
     "VIDEO_UNAVAILABLE": "影片無法播放", "PRIVATE": "私人影片",
     "MEMBERS_ONLY": "會員限定", "AGE_RESTRICTED": "年齡限制需登入",
     "SPOTIFY_DRM": "Spotify不支援(改貼Apple/RSS)", "FIRSTORY_PAGE": "Firstory單集頁(改貼Apple/RSS)",
-    "UNSUPPORTED": "連結不支援(貼單集/RSS)", "NO_EPISODES": "RSS內無單集",
+    "UNSUPPORTED": "連結不支援(貼單集/RSS；網頁文章可用 fetch_document.py)", "NO_EPISODES": "RSS內無單集",
     "CANCELLED": "已取消", "UNKNOWN": "未知原因(請確認網址或重試)",
+    # ---- 文檔進料（P0-1，fetch_document.py）----
+    "FILE_NOT_FOUND": "找不到檔案", "UNSUPPORTED_EXT": "不支援副檔名(限pdf/md/txt/docx)",
+    "EXTRACT_EMPTY": "抽不出文字", "URL_FETCH_FAILED": "網頁抓取失敗", "NEEDS_DEP": "缺相依套件(見日誌)",
 }
 MODELS = {"快": "base", "標準": "small", "高": "medium"}
 
 
-def parse_urls(text):
+DOC_EXTS = (".pdf", ".md", ".txt", ".docx")   # 文檔進料（P0-1）
+
+
+def parse_inputs(text, rejected=None):
+    """解析輸入框（P0-1）：http(s) 網址照舊；新收「存在的本機文檔」（pdf/md/txt/docx，
+    可帶引號、路徑可含逗號）。回傳 [(值, 型別)]，型別 ∈ {"url", "doc"}。
+    rejected（F3）：傳 list 進來時，收集被略過的疑似檔路徑行 (原文, 原因)；
+    文檔路徑請一行一個，勿與網址同行逗號混貼。"""
     out, seen = [], set()
-    for line in (text or "").replace(",", "\n").split("\n"):
-        u = line.strip()
-        if re.match(r"https?://", u) and u not in seen:
-            seen.add(u)
-            out.append(u)
+
+    def add(v, kind):
+        if v not in seen:
+            seen.add(v)
+            out.append((v, kind))
+
+    for line in (text or "").split("\n"):
+        raw = line.strip().strip('"').strip("'").strip()
+        if not raw:
+            continue
+        if raw.lower().endswith(DOC_EXTS) and not re.match(r"https?://", raw):
+            if os.path.isfile(raw):
+                add(raw, "doc")
+            elif rejected is not None:            # F3：像文檔路徑但檔案不存在
+                rejected.append((raw, "檔案不存在"))
+            continue
+        if os.path.isfile(raw):                   # F3：真實檔案但副檔名不在白名單
+            if rejected is not None:
+                rejected.append((raw, "不支援副檔名(限pdf/md/txt/docx)"))
+            continue
+        for piece in raw.replace(",", "\n").split("\n"):   # 舊行為：同行逗號分隔多網址
+            u = piece.strip()
+            if re.match(r"https?://", u):
+                add(u, "url")
     return out
+
+
+def parse_urls(text):
+    """舊名別名（recount 計數等沿用）：只回值清單。"""
+    return [v for v, _ in parse_inputs(text)]
 
 
 def short(s, n=48):
@@ -760,7 +889,7 @@ def start_gui():
     head.grid(row=0, column=0, sticky="ew", padx=24, pady=(18, 4))
     head.grid_columnconfigure(0, weight=1)
     ctk.CTkLabel(head, text="🎬  影片轉文章", font=F["h1"], text_color=TXT_HI).grid(row=0, column=0, sticky="w")
-    ctk.CTkLabel(head, text="貼上一支或多支網址，一鍵批次變成可閱讀的精讀文章 · YouTube / Podcast / X / Vimeo",
+    ctk.CTkLabel(head, text="貼上網址或本機文檔路徑，一鍵批次變成可閱讀的精讀文章 · YouTube / Podcast / X / PDF / Word / Markdown",
                  font=F["sub"], text_color=GOLD).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
     # ---- 輸入卡片 ----
@@ -772,8 +901,8 @@ def start_gui():
     urlhdr = ctk.CTkFrame(card, fg_color="transparent")
     urlhdr.grid(row=0, column=0, sticky="ew", pady=(14, 4), **pad)
     urlhdr.grid_columnconfigure(0, weight=1)
-    ctk.CTkLabel(urlhdr, text="影片／Podcast 網址", font=F["lab"], text_color=TXT_HI).grid(row=0, column=0, sticky="w")
-    cnt_lab = ctk.CTkLabel(urlhdr, text="一行一個，可貼多支批次（YouTube／Apple Podcasts／SoundCloud／Firstory／SoundOn／RSS）", font=F["small"], text_color=TXT_LO)
+    ctk.CTkLabel(urlhdr, text="影片／Podcast 網址・文檔路徑", font=F["lab"], text_color=TXT_HI).grid(row=0, column=0, sticky="w")
+    cnt_lab = ctk.CTkLabel(urlhdr, text="一行一個可批次（YouTube／Podcast／RSS），或貼本機 PDF/Word/Markdown 檔路徑", font=F["small"], text_color=TXT_LO)
     cnt_lab.grid(row=0, column=1, sticky="e")
     url_box = ctk.CTkTextbox(card, font=F["url"], height=92, corner_radius=10, wrap="none")
     url_box.grid(row=1, column=0, sticky="ew", pady=(0, 12), **pad)
@@ -869,8 +998,13 @@ def start_gui():
 
     # ---- URL 數量即時提示 + 按鈕文案 ----
     def recount(_=None):
-        n = len(parse_urls(url_box.get("1.0", "end")))
-        cnt_lab.configure(text=(f"已偵測 {n} 支網址" if n else "一行一個，可貼多支批次"))
+        rej = []
+        n = len(parse_inputs(url_box.get("1.0", "end"), rejected=rej))
+        txt = (f"已偵測 {n} 筆輸入" if n
+               else "一行一個可批次，或貼本機 PDF/Word/Markdown 檔路徑（文檔路徑請一行一個，勿與網址同行逗號混貼）")
+        if rej:                                   # F3：略過行即時提示（有效項照跑不擋）
+            txt += f"　⚠ {len(rej)} 行被略過：" + "；".join(f"{short(p, 20)}（{why}）" for p, why in rej)
+        cnt_lab.configure(text=txt)
         if not st["busy"]:
             start_btn.configure(text=("開始作業  ▶" if n <= 1 else f"批次處理 {n} 支  ▶"))
     url_box.bind("<KeyRelease>", recount)
@@ -1054,7 +1188,8 @@ def start_gui():
                     pass
 
     # ---- worker（逐一處理，失敗略過續跑）----
-    def worker(urls, lang, mode, model, category):
+    def worker(items, lang, mode, model, category):
+        urls = [v for v, _ in items]             # 顯示／計數沿用舊變數名
         ok_n = 0
         failed = []
         last_article = last_dir = None
@@ -1072,7 +1207,7 @@ def start_gui():
             q.put(("actions", None, None))
             q.put(("done", (0, len(urls), [short(u, 24) for u in urls])))
             return
-        for i, url in enumerate(urls):
+        for i, (url, kind) in enumerate(items):
             if ctrl["cancel"].is_set():
                 break
             q.put(("active", i, f"第 {i+1}/{len(urls)} 支 · 連線中…"))
@@ -1080,7 +1215,11 @@ def start_gui():
             def L(s, _i=i):
                 q.put(("log", _i, s))
             try:
-                info = run_fetch(url, lang, model, BASE / category, L, ctrl)
+                # 型別路由（P0-1）：本機文檔→fetch_document；URL 照舊 fetch_transcript（不自動 fallback）
+                if kind == "doc":
+                    info = run_fetch_document(url, BASE / category, L, ctrl)
+                else:
+                    info = run_fetch(url, lang, model, BASE / category, L, ctrl)
                 if ctrl["cancel"].is_set():
                     q.put(("itemdone", i, False, "已取消"))
                     break
@@ -1120,11 +1259,16 @@ def start_gui():
     def on_start():
         if st["busy"]:
             return
-        urls = parse_urls(url_box.get("1.0", "end"))
-        if not urls:
-            step_lab.configure(text="沒有有效網址", text_color=RED)
-            sub_lab.configure(text="請一行一個貼上 http 開頭的影片網址")
-            status.configure(text="請貼上有效網址", text_color=RED)
+        rejected = []
+        items = parse_inputs(url_box.get("1.0", "end"), rejected=rejected)   # [(值, url|doc)]（P0-1）
+        urls = [v for v, _ in items]
+        skip_msg = "；".join(f"{short(p, 20)}（{why}）" for p, why in rejected)
+        if not items:
+            step_lab.configure(text="沒有有效輸入", text_color=RED)
+            sub_lab.configure(text=(f"{len(rejected)} 行被略過：{skip_msg}" if rejected else
+                                    "請一行一個貼上 http 開頭的網址，或存在的本機 PDF/Word/Markdown/TXT 檔路徑"
+                                    "（文檔路徑請一行一個，勿與網址同行逗號混貼）"))
+            status.configure(text="請貼上有效網址或檔路徑", text_color=RED)
             return
         st.update(busy=True, active=-1, last_article=None, last_dir=None)
         ctrl["cancel"].clear()
@@ -1141,11 +1285,12 @@ def start_gui():
         obsidian_btn.configure(state="disabled")
         bar.set(0)
         step_lab.configure(text=("準備中…" if len(urls) == 1 else f"批次 0/{len(urls)} · 準備中…"), text_color=TXT_HI)
-        status.configure(text="處理中…", text_color=GOLD)
+        status.configure(text=(f"處理中…（{len(rejected)} 行被略過：{skip_msg}）" if rejected else "處理中…"),
+                         text_color=GOLD)
         model = MODELS.get(quality_seg.get(), "small")
         category = safe_cat(cat_combo.get())
         threading.Thread(target=worker,
-                         args=(urls, lang_entry.get().strip(), depth_seg.get(), model, category),
+                         args=(items, lang_entry.get().strip(), depth_seg.get(), model, category),
                          daemon=True).start()
         root.after(80, drain)
 

@@ -84,6 +84,23 @@ python "<技能資料夾>\scripts\build_index.py"
 
 ---
 
+## 文檔進料（PDF／網頁文章／Markdown／Word）
+
+非影音來源走 `fetch_document.py`（出口與 `fetch_transcript.py` 同 schema、`meta.type="document"`，第 2、3 步完全共用；因無時間軸，寫文時**不要求標時間碼**）：
+
+```
+python "<技能資料夾>\scripts\fetch_document.py" "<檔路徑或文章URL>" --base "桌面\YT影片文章"
+```
+
+- 吃本機 **PDF／md／txt／docx** 或**網頁文章 URL**，可混合多個輸入。
+- `--merge`：把多份輸入合併成單一文章（正文以 `【來源①：…】` 分節）。
+- `--private`：敏感內容標記——**不進知識庫 index、不嵌內文、不送 Obsidian vault**（三出口 fail-closed）。私密內容建議 `--out` 到庫外專夾，例如：
+  `python … fetch_document.py "機密報告.pdf" --private --out "<你的庫外私密夾>\機密報告__doc-xxxxxxxx"`
+- 其他：`--category 分類`／`--title 標題`／`--date YYYYMMDD`／`--selftest`（自驗）。
+- PDF metadata 若是垃圾標題（`無題 1`／`Untitled`／`*.odt`…）會自動退回檔名；失敗寫夾內 `fetch_error.json`。
+
+---
+
 ## 撰寫鐵則（嚴謹＝命脈；這段最重要）
 
 ### ① 忠實，不杜撰
@@ -170,7 +187,9 @@ python "<技能資料夾>\scripts\build_index.py"
 - [ ] 三個檔都在同一個 `桌面\YT影片文章\<標題>__<id>\` 夾內。
 
 ## 工具檔案
-- `scripts/fetch_transcript.py` —— 抓取＋字幕挑選＋解析（json3 主、vtt 備援；原語優先）；含 Podcast 連結正規化與財經科技詞庫校正。
+- `scripts/fetch_transcript.py` —— 影音抓取＋字幕挑選＋解析（json3 主、vtt 備援；原語優先）；含 Podcast 連結正規化與財經科技詞庫校正。輸出 `meta.type="av"`。
+- `scripts/fetch_document.py` —— 文檔進料口（PDF／網頁文章／md／txt／docx → 同 schema、`meta.type="document"`；支援 `--merge`／`--private`；`--selftest` 自驗）。零新依賴（PyMuPDF／標準庫）。
+- `scripts/common.py` —— 共用常數單一定義（來源標籤 SRC_MAP／時間碼 regex／平台判定／安全檔名），供各腳本與啟動器共用。
 - `scripts/render_html.py` —— 自帶極簡 Markdown→HTML；navy/gold 大字宋體閱讀版，時間碼可點回原片，含列印樣式。
 - `scripts/build_index.py` —— 知識總覽首頁（全文搜尋＋分類標籤篩選）。
 - `scripts/export_formats.py` —— 匯出 `transcript.srt`／`.vtt`／`article.obsidian.md`（Obsidian 優化：原生 callout、YT 時間碼可點、block-list frontmatter）；**送進 Obsidian vault**：`python scripts/export_formats.py "<輸出夾>" --vault auto`（自動偵測 vault→寫進 `影片文章/`、依來源去重、首次建 `影片文章.base` 視圖）。GUI 有「↧ 匯出檔」與「📥 送到 Obsidian」鈕。

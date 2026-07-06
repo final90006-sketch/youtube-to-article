@@ -754,6 +754,7 @@ def main():
             download_url = ent_url
 
     meta = {
+        "type": "av",                            # schema v2（P0-2）：本腳本產的都是影音型
         "id": info.get("id"),
         "title": info.get("title"),
         "channel": info.get("channel") or info.get("uploader"),
@@ -807,7 +808,8 @@ def main():
                     "message": "這部影片沒有任何可用字幕（人工或自動皆無）。",
                     "meta": meta,
                 }
-                (outdir / "transcript.json").write_text(
+                # 失敗紀錄改名 fetch_error.json（P0-3）：不再產 ok:false 的 transcript.json 汙染入庫判準
+                (outdir / "fetch_error.json").write_text(
                     json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
                 print(json.dumps({"ok": False, "reason": "NO_SUBTITLES"}, ensure_ascii=False))
                 log("[ERROR] 找不到字幕。")
@@ -816,7 +818,8 @@ def main():
             use_whisper = True
 
     def _fail(reason, message, code=2):
-        (outdir / "transcript.json").write_text(
+        # 失敗紀錄改名 fetch_error.json（P0-3）：不再產 ok:false 的 transcript.json 汙染入庫判準
+        (outdir / "fetch_error.json").write_text(
             json.dumps({"ok": False, "reason": reason, "message": message, "meta": meta},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps({"ok": False, "reason": reason, "message": message}, ensure_ascii=False))
@@ -913,6 +916,10 @@ def main():
     }
     (outdir / "transcript.json").write_text(
         json.dumps(out_json, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:                                         # 前次失敗殘留的 fetch_error.json：成功即清掉
+        (outdir / "fetch_error.json").unlink()
+    except OSError:
+        pass
 
     # ---- 輸出 transcript.txt（人可讀；每行帶 [mm:ss]，章節插入標頭）----
     lines = []

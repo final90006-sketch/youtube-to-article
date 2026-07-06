@@ -24,7 +24,9 @@ for _s in ("stdout", "stderr"):
     except Exception:
         pass
 
-TS_PAT = re.compile(r"\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]")
+from common import TS_PAT3  # noqa: E402（P0-3 常數收斂；3 組變體，ts_seconds 靠分組取時分秒）
+
+TS_PAT = re.compile(TS_PAT3)
 
 
 def ts_seconds(m):

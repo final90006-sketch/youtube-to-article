@@ -27,7 +27,9 @@ for _s in ("stdout", "stderr"):
     except Exception:
         pass
 
-TS_PAT = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
+from common import SRC_MAP, TS_PAT as _TS_PAT_SRC, platform_plain  # noqa: E402（P0-3 常數收斂）
+
+TS_PAT = re.compile(_TS_PAT_SRC)
 
 
 # ---------------------------------------------------------------------------
@@ -80,23 +82,6 @@ def _yaml_str(v):
     return '"' + str(v or "").replace("\\", "/").replace('"', "'").replace("\n", " ").strip() + '"'
 
 
-def _platform(url):
-    u = (url or "").lower()
-    if "youtube.com" in u or "youtu.be" in u:
-        return "YouTube"
-    if "podcasts.apple" in u:
-        return "Podcast"
-    if "soundcloud" in u:
-        return "SoundCloud"
-    if any(k in u for k in ("firstory", "soundon", "spotify", "rss", ".mp3")):
-        return "Podcast"
-    if "x.com" in u or "twitter.com" in u:
-        return "X"
-    if "vimeo" in u:
-        return "Vimeo"
-    return "影片"
-
-
 def _ts_seconds(ts):
     try:
         parts = [int(p) for p in ts.split(":")]
@@ -131,12 +116,12 @@ def _linkify_timecodes(md, video_url):
 def to_obsidian(article_md, meta, track, category, html_path=None):
     up = meta.get("upload_date") or ""
     published = f"{up[0:4]}-{up[4:6]}-{up[6:8]}" if len(up) == 8 else ""
-    src_map = {"manual": "人工字幕", "auto": "自動字幕", "auto-translated": "自動翻譯", "whisper": "語音辨識"}
+    is_doc = (meta.get("type") or "av") == "document"   # schema v2：缺欄位＝av
     url = meta.get("webpage_url") or ""
-    plat = _platform(url)
+    plat = platform_plain(url)
     cat = category if category and category not in ("YT影片文章", "未分類") else ""
 
-    tags = ["影片文章"]
+    tags = ["影片文章"]      # 首項維持「影片文章」不動（分容器是 P2）
     if cat:
         tags.append(re.sub(r"\s+", "", cat))
     tags.append(plat)
@@ -144,7 +129,7 @@ def to_obsidian(article_md, meta, track, category, html_path=None):
 
     fm = ["---",
           f"title: {_yaml_str(meta.get('title'))}",
-          "type: video-article",
+          "type: document-article" if is_doc else "type: video-article",
           f"source: {_yaml_str(url)}",
           f"author: {_yaml_str(meta.get('channel'))}"]
     if meta.get("channel_url"):
@@ -156,7 +141,7 @@ def to_obsidian(article_md, meta, track, category, html_path=None):
         fm.append(f"duration: {_yaml_str(meta.get('duration_str'))}")
     if meta.get("duration"):
         fm.append(f"duration_sec: {int(meta.get('duration'))}")
-    fm.append(f"transcript_source: {_yaml_str(src_map.get(track.get('source'), track.get('source')))}")
+    fm.append(f"transcript_source: {_yaml_str(SRC_MAP.get(track.get('source'), track.get('source')))}")
     if meta.get("language"):
         fm.append(f"language: {_yaml_str(meta.get('language'))}")
     if cat:
@@ -288,7 +273,10 @@ def write_to_vault(vault, folder, note_text, title, source_url):
                     pass
 
     fp = target / (_safe_name(title) + ".md")
-    fp.write_text(note_text, encoding="utf-8")
+    # utf-8-sig（含 BOM）：PowerShell 5.1 / 記事本等 ANSI 預設工具才不會把中文
+    # frontmatter 讀成亂碼（交接 §九「?芸?摮?」bug 的根因＝無 BOM 被當 cp950 解）。
+    # Obsidian 的 YAML 解析器會剝 BOM，實測不影響 properties。
+    fp.write_text(note_text, encoding="utf-8-sig")
 
     # 首次：建立 Bases 視圖
     base_fp = target / "影片文章.base"
@@ -313,7 +301,9 @@ def main():
     segments = data.get("segments", []) or []
     meta = data.get("meta", {}) or {}
     track = data.get("track", {}) or {}
+    is_doc = (meta.get("type") or "av") == "document"   # schema v2：缺欄位＝av
     written = []
+    skipped = []
     obsidian_text = None
 
     if (args.srt or plain) and segments:
@@ -322,16 +312,24 @@ def main():
     if (args.vtt or plain) and segments:
         (d / "transcript.vtt").write_text(to_vtt(segments), encoding="utf-8")
         written.append("transcript.vtt")
+    if (args.srt or args.vtt or plain) and not segments and is_doc:
+        skipped.append("srt/vtt：document 型無逐字稿 segments，跳過字幕匯出")
     if (args.obsidian or plain or args.vault) and (d / "article.md").exists():
         art = (d / "article.md").read_text(encoding="utf-8")
         html_path = (d / "article.html") if (d / "article.html").exists() else None
         obsidian_text = to_obsidian(art, meta, track, d.parent.name, html_path)
-        (d / "article.obsidian.md").write_text(obsidian_text, encoding="utf-8")
+        # utf-8-sig（含 BOM）：修交接 §九 frontmatter 亂碼（見 write_to_vault 註解）
+        (d / "article.obsidian.md").write_text(obsidian_text, encoding="utf-8-sig")
         written.append("article.obsidian.md")
 
     result = {"ok": bool(written), "written": written, "dir": str(d)}
+    if skipped:
+        result["skipped"] = skipped
 
-    if args.vault and obsidian_text:
+    if args.vault and meta.get("private"):
+        # 敏感分流（F2）：private 不送 Obsidian vault（夾內 article.obsidian.md 照產，僅擋入庫）
+        result["vault_error"] = "private 文檔不送 Obsidian vault"
+    elif args.vault and obsidian_text:
         vault = detect_vault() if args.vault == "auto" else args.vault
         if not vault or not Path(vault).exists():
             result["vault_error"] = "找不到 Obsidian vault（請確認已開過 Obsidian，或用 --vault 指定路徑）"
