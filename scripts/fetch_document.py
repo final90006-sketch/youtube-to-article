@@ -32,9 +32,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import SRC_MAP, safe_filename  # noqa: E402（P0-3 常數收斂：單一定義處）
+from common import SRC_MAP, safe_filename, resolve_base  # noqa: E402（P0-3 常數收斂：單一定義處）
 
-DEFAULT_BASE = Path.home() / "Desktop" / "YT影片文章"
+DEFAULT_BASE = resolve_base()
 DOC_EXTS = (".pdf", ".md", ".txt", ".docx")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -288,7 +288,7 @@ def extract_one(raw_input):
 # ---------------------------------------------------------------------------
 # 輸出契約（對齊 fetch_transcript）
 # ---------------------------------------------------------------------------
-def emit(outdir, ident, title, source, text, url, date_str, private, display_src):
+def emit(outdir, ident, title, source, text, url, date_str, private, display_src, sources=None):
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     char_count = len(text)
@@ -313,6 +313,8 @@ def emit(outdir, ident, title, source, text, url, date_str, private, display_src
         "track": {"source": source, "char_count": char_count},
         "segments": [],
     }
+    if sources is not None:                        # 選配頂層 key；單源/av 無此鍵→下游短路、位元組不變
+        out_json["sources"] = sources
     (outdir / "transcript.json").write_text(
         json.dumps(out_json, ensure_ascii=False, indent=2), encoding="utf-8")
     try:                                          # 前次失敗殘留的 fetch_error.json：成功即清掉
@@ -389,15 +391,20 @@ def run(args):
         source = items[0]["source"] if len({it["source"] for it in items}) == 1 else "mixed"
         ident = "doc-" + hashlib.sha1(
             "|".join(it["seed"] for it in items).encode("utf-8")).hexdigest()[:8]
-        parts = []
+        parts, sources = [], []
         for i, it in enumerate(items):
             mark = CIRCLED[i] if i < len(CIRCLED) else str(i + 1)
             parts.append(f"【來源{mark}：{it['title']}】\n\n{it['text']}")
+            sources.append({                          # 同迴圈累積結構化來源（供 render 端錨點＋附錄）
+                "n": i + 1, "mark": mark, "title": it["title"],
+                "source": it["source"], "url": it["url"],
+                "display": it["display"], "text": it["text"],
+            })
         text = "\n\n\n".join(parts)
         url = items[0]["url"] if len(items) == 1 else ""   # 多來源不造單一連結（防假連結雷）
         outdir = fixed_out or base / f"{safe_filename(title)}__{ident}"
         emit(outdir, ident, title, source, text, url, args.date or items[0]["date"],
-             args.private, "；".join(it["display"] for it in items))
+             args.private, "；".join(it["display"] for it in items), sources=sources)
         return 0
 
     rc = 0

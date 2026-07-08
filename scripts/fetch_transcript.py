@@ -34,6 +34,9 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 讓 from common import 成立（比照 fetch_document）
+from common import resolve_base  # noqa: E402（知識庫 base 可設定：base_path.txt）
+
 try:
     from yt_dlp import YoutubeDL
 except Exception as e:  # pragma: no cover
@@ -628,7 +631,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
     ap.add_argument("--out", default=None, help="明確指定輸出資料夾")
-    ap.add_argument("--base", default=None, help="輸出基底夾；自動建立 <base>/<標題>__<id>/")
+    ap.add_argument("--base", default=str(resolve_base()), help="輸出基底夾；自動建立 <base>/<標題>__<id>/（預設＝知識庫 base，可改 base_path.txt）")
     ap.add_argument("--lang", default=None, help="強制字幕語言（如 zh-Hant / en / ja）")
     ap.add_argument("--whisper", action="store_true", help="強制用語音辨識（不論有無字幕）")
     ap.add_argument("--no-whisper", action="store_true", help="無字幕時不要用語音辨識（維持舊行為，直接回報）")

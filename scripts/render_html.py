@@ -50,11 +50,20 @@ def clean_title(raw):
     return t.strip(" 　·•💡⚡❝🔑📌▸▶").strip() or raw.strip()
 
 
+# 多來源綜合：圈圈數字（①…⑳）↔ int；超 20 源時正文/附錄改用純數字
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+
+
+def _circled_to_int(s):
+    return _CIRCLED.index(s) + 1 if s in _CIRCLED else int(s)
+
+
 # ---------------------------------------------------------------------------
 # 行內格式
 # ---------------------------------------------------------------------------
-def make_inline(video_url):
+def make_inline(video_url, src_ids=None):
     ts_re = re.compile(TS_PAT)
+    cite_re = re.compile(r"（來源([①-⑳]|[0-9]+)）")   # 只吃單一圈號｜純數字串；混合 token（如①2）不匹配→原樣純文字降級，不進 _circled_to_int
     link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
     code_re = re.compile(r"`([^`]+)`")
     bold_re = re.compile(r"\*\*([^*]+)\*\*")
@@ -93,6 +102,13 @@ def make_inline(video_url):
             return f'<span class="ts ts-flat">{ts}</span>'
 
         text = ts_re.sub(ts_sub, text)
+        if src_ids:                                   # 空/None → 整條 cite 正則不套（av/單源短路，位元組零回歸）
+            def cite_sub(m):
+                n = _circled_to_int(m.group(1))
+                if n in src_ids:
+                    return f'<a class="cite" href="#src-{n}">{m.group(0)}</a>'
+                return m.group(0)                     # 越界來源號 → 原樣純文字，不生死錨點
+            text = cite_re.sub(cite_sub, text)
         text = bold_re.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
         text = ital_re.sub(lambda m: f"<em>{m.group(1)}</em>", text)
         for i, c in enumerate(codes):               # 還原行內碼（內容照實轉義、不套任何格式）
@@ -143,8 +159,8 @@ def quote_card(text_md, inline):
 # ---------------------------------------------------------------------------
 # Markdown → HTML（單趟掃描，依標題名分流；回傳 body, toc, stats）
 # ---------------------------------------------------------------------------
-def md_to_html(md, video_url):
-    inline = make_inline(video_url)
+def md_to_html(md, video_url, src_ids=None):
+    inline = make_inline(video_url, src_ids)
     lines = md.replace("\r\n", "\n").split("\n")
     out = []
     toc = []
@@ -382,6 +398,22 @@ def render_transcript(segments, video_url):
             '<div class="tx-body">' + "".join(rows) + "</div></details>")
 
 
+def render_sources(sources):
+    # 多來源綜合附錄：仿 render_transcript「空回空字串」；各源原文內嵌可摺疊，供內文（來源N）錨點跳回核對。
+    if not sources:
+        return ""
+    secs = []
+    for s in sources:
+        body = "".join(f"<p>{html.escape(p)}</p>"
+                       for p in (s.get("text") or "").split("\n") if p.strip())
+        src_line = f'<div class="src-from">來源：{html.escape(s.get("display") or s.get("title", ""))}</div>'
+        secs.append(f'<section class="src" id="src-{s["n"]}">'
+                    f'<h3>來源{s.get("mark", "")}　{html.escape(s.get("title", ""))}</h3>'
+                    f'{src_line}{body}</section>')
+    return ('<details class="sources"><summary>各來源原文　·　點內文（來源N）跳來此處核對</summary>'
+            '<div class="src-body">' + "".join(secs) + "</div></details>")
+
+
 # ---------------------------------------------------------------------------
 # 樣式與腳本（純字面字串，無 .format，避免大括號轉義地獄）
 # ---------------------------------------------------------------------------
@@ -613,6 +645,23 @@ footer.doc{margin:50px 0 0;padding-top:20px;border-top:1px solid var(--line);
 }
 """
 
+# 多來源綜合專用樣式：僅在頁面實含 sources 時由 build_page 併入（av/單源不注入→CSS 位元組零回歸）
+SOURCES_CSS = r"""
+/* 多來源綜合：內文 citation 膠囊＋來源附錄（比照 .transcript） */
+.cite{color:var(--gold-2);text-decoration:none;font-weight:600;white-space:nowrap}
+.cite:hover{text-decoration:underline}
+.sources{margin:46px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.sources summary{cursor:pointer;padding:15px 20px;font-family:var(--font-serif);font-weight:700;font-size:16px;color:var(--navy);list-style:none}
+.sources summary::-webkit-details-marker{display:none}
+.sources summary::before{content:"▸ ";color:var(--gold-2)}
+.sources[open] summary::before{content:"▾ "}
+.src-body{border-top:1px solid var(--line);padding:2px 24px 12px}
+.src{scroll-margin-top:74px;padding:16px 0;border-bottom:1px solid var(--line)}
+.src:last-child{border-bottom:none}
+.src-from{font-size:13px;color:var(--ink-3);margin:2px 0 12px}
+.src p{margin:0 0 12px;font-size:15.5px;line-height:1.82;color:var(--ink-2)}
+"""
+
 THEME_INIT = """
 (function(){try{var t=localStorage.getItem('vtp-theme');
 if(!t){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}
@@ -708,6 +757,11 @@ var ck='vtp-'+(data.vid||'x')+'-checks',st={};try{st=JSON.parse(localStorage.get
 })();
 """
 
+# 多來源綜合專用腳本：點內文（來源N）時先展開附錄再由原生錨點捲到 #src-N（僅含 sources 時注入）
+SOURCES_JS = r"""
+(function(){document.addEventListener('click',function(e){var c=(e.target&&e.target.closest)?e.target.closest('a.cite'):null;if(c){var d=document.querySelector('details.sources');if(d)d.open=true;}});})();
+"""
+
 
 def fmt_upload_date(d):
     if d and len(d) == 8:
@@ -715,9 +769,12 @@ def fmt_upload_date(d):
     return d or ""
 
 
-def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, video_url, doc_title=None):
+def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, video_url, doc_title=None, sources_html=""):
     is_doc = (meta.get("type") or "av") == "document"   # schema v2：缺欄位＝av
     title = html.escape(str(doc_title or meta.get("title", "影片文章")))
+    # 多來源綜合樣式/腳本僅在頁面實含 sources 時併入；av/單源 sources_html 空 → 不注入 → 位元組零回歸
+    extra_css = SOURCES_CSS if sources_html else ""
+    extra_js = SOURCES_JS if sources_html else ""
 
     meta_bits = []
     if meta.get("channel"):
@@ -763,7 +820,7 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <script>{THEME_INIT}</script>
-<style>{CSS}</style>
+<style>{CSS}{extra_css}</style>
 </head>
 <body>
 <div id="progress"></div>
@@ -797,12 +854,12 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
     <div id="copyscope">
 {body_html}
     </div>
-    {transcript_html}
+    {sources_html}{transcript_html}
     <footer class="doc">{footer}</footer>
   </main>
 </div>
 <script id="vtp-data" type="application/json">{data_json}</script>
-<script>{JS}</script>
+<script>{JS}{extra_js}</script>
 </body>
 </html>
 """
@@ -828,9 +885,13 @@ def main():
         if re.fullmatch(r"[A-Za-z0-9_-]{11}", _mid):
             video_url = f"https://youtu.be/{_mid}"
 
-    body_html, toc, stats, doc_title = md_to_html(md, video_url)
+    sources = data.get("sources", [])                 # 多來源綜合：僅 merge 產出此頂層 key；av/單源無 → 全短路
+    src_ids = {s["n"] for s in sources}
+    body_html, toc, stats, doc_title = md_to_html(md, video_url, src_ids)
     transcript_html = render_transcript(segments, video_url)
-    page = build_page(meta, track, body_html, toc, stats, transcript_html, md, video_url, doc_title)
+    sources_html = render_sources(sources)
+    page = build_page(meta, track, body_html, toc, stats, transcript_html, md, video_url, doc_title,
+                      sources_html=sources_html)
 
     Path(args.out).write_text(page, encoding="utf-8")
     print(f"[OK] 已輸出精緻閱讀版 → {args.out}")

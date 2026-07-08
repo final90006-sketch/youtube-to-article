@@ -24,16 +24,17 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
-from common import TS_PAT, TS_PAT3, hms  # noqa: E402（P0-3 常數收斂）
+from common import TS_PAT, TS_PAT3, hms, resolve_base  # noqa: E402（P0-3 常數收斂）
 
 FETCH = SKILL_DIR / "scripts" / "fetch_transcript.py"
 FETCH_DOC = SKILL_DIR / "scripts" / "fetch_document.py"   # 文檔進料口（P0-1）
 RENDER = SKILL_DIR / "scripts" / "render_html.py"
 INDEX = SKILL_DIR / "scripts" / "build_index.py"
+REVIEW = SKILL_DIR / "scripts" / "build_review.py"   # 每日回顧（間隔重複）
 EXPORT = SKILL_DIR / "scripts" / "export_formats.py"
 DERIVE = SKILL_DIR / "scripts" / "derive_extras.py"
 THEME = SKILL_DIR / "brand_navy.json"
-BASE = Path(os.path.expanduser("~")) / "Desktop" / "YT影片文章"
+BASE = resolve_base()  # 知識庫 base（可設定；技能根 base_path.txt，無檔退回 桌面\YT影片文章）
 CATS_FILE = SKILL_DIR / "categories.json"
 DEFAULT_CATS = ["投資理財", "法律", "科技AI", "健康", "學習成長", "時事評論", "其他"]
 PY = sys.executable
@@ -80,6 +81,30 @@ def run_build_index(log=lambda s: None):
                        creationflags=NO_WINDOW, capture_output=True)
     except Exception as e:
         log(f"（知識總覽更新失敗：{e}）")
+
+
+def run_build_review(base=None, ctrl=None, log=lambda s: None):
+    """收尾產「每日回顧」review.html（仿 run_build_index；收 stdout JSON、支援 ctrl 取消）。"""
+    if ctrl is not None and ctrl.get("cancel") is not None and ctrl["cancel"].is_set():
+        return None
+    try:
+        proc = subprocess.Popen([PY, str(REVIEW), "--base", str(base or BASE)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace",
+                                creationflags=NO_WINDOW)
+        if ctrl is not None:
+            ctrl["proc"] = proc
+        out, _ = proc.communicate()
+        for line in (out or "").splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except Exception:
+                    pass
+    except Exception as e:
+        log(f"（每日回顧更新失敗：{e}）")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +166,21 @@ def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False):
     channel = meta.get("channel", "")
     if doc:
         # type=document 變體（P0-2）：無秒級時間軸→不要求時間碼；標題契約／洞察／行動／金句／自我檢核照舊
+        # 多來源綜合（P1-1）：--merge 合併稿正文以【來源①②③】分節→multi 時加「綜合重組＋句末標來源號」鐵則；
+        # 單源 multi=False→cite_rule／struct_note 皆空字串，靠「\n＋空字串＋\n」重建原「\n\n」→prompt 位元組與改動前完全一致。
+        multi = "【來源" in transcript_txt
+        cite_rule = ""
+        struct_note = ""
+        if multi:
+            cite_rule = (
+                "6. 【多來源綜合】本文是多份來源的合併稿（正文以【來源①②③】分節）：務必融合重組成一篇連貫長文、"
+                "依主題交叉引用，勿一份來源一段照抄。每個論點或關鍵數據，在該句句末標來源號（來源③）；"
+                "綜合多源時並列（來源①）（來源③）。來源號沿用正文【來源①②③】的圈圈數字，勿自行編號。\n"
+            )
+            struct_note = (
+                "（多來源綜合：每個論點／關鍵數據在句末標（來源N），綜合多源時並列（來源①）（來源③），"
+                "來源號沿用正文【來源①②③】圈圈數字。）\n"
+            )
         return (
             "你是把長篇文檔『精讀』成一篇繁體中文長文的編輯。立場是精讀、不是摘要：寧長毋短、寧詳毋略。\n\n"
             "鐵則：\n"
@@ -148,7 +188,9 @@ def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False):
             "2. 完整保留細節（對抗摘要太短）：每個論點、例子、數據、步驟、推理、轉折都要落進文章；沒讀過原文的人讀完能掌握約 95% 實質內容。\n"
             "3. 不是逐字貼：去掉冗詞與重複，重組成通順書面段落，但資訊點一個都不能少。\n"
             "4. 繁體中文輸出；原文非中文就忠實翻譯，專有名詞／人名／書名首次出現括號附原文。\n"
-            "5. 不截斷：絕不用『（後略）』『以下省略』；長就寫完整部。\n\n"
+            "5. 不截斷：絕不用『（後略）』『以下省略』；長就寫完整部。\n"
+            + cite_rule +
+            "\n"
             "結構（務必照用這些標題字串，程式會自動做成卡片／清單；emoji 要保留）：\n"
             "# 標題（用下方提供的標題）\n"
             "## 💡 重點洞察  → 3–6 條『一句話』洞察，每條一個「- 」\n"
@@ -159,6 +201,7 @@ def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False):
             "## 🧠 自我檢核  → 選用：3–6 題，每行『- 問題？｜答案』（用全形｜分隔），給讀者複習\n"
             "## 關鍵結論 / 名詞解釋  → 視內容加\n\n"
             "正文可用強調框：> [!key] 重點 / > [!warn] 注意 / > [!note] 提示。\n"
+            + struct_note +
             f"深度：{mode}（逐節精讀＝最完整；快覽＝只洞察＋行動＋各章兩三句；逐字精修＝接近原文、整理標點與分段）。\n"
             "\n只輸出 Markdown 本文，第一個字元就是「#」。不要任何前言、結語、解說，也不要用 ``` 圍欄。\n\n"
             f"標題：{title}\n來源／作者：{channel}\n\n"
@@ -758,7 +801,8 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
     except Exception:
         ttxt = _segs_to_text(data.get("segments", []))
     # 路由：短片單次（已驗證路徑）；長片分塊（避免單次輸出截斷）；快覽因輸出短不分塊
-    if mode != "快覽" and len(ttxt) > CHUNK_THRESHOLD_CHARS:
+    multi = doc and ("【來源" in ttxt)             # 決策4：多來源合併稿（正文含【來源①②③】分節）
+    if mode != "快覽" and len(ttxt) > CHUNK_THRESHOLD_CHARS and not multi:
         segments = data.get("segments", [])
         chapters = data.get("chapters") or []
         if doc and not segments:
@@ -778,6 +822,10 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
                                        chapters=chapters, doc=doc)
         log("  ⚠ 長文檔但無法分塊（內文無空行段落結構），改單次撰寫、可能被截斷，請開檔檢查完整性。" if doc
             else "  ⚠ 長片但無法分塊（逐字稿缺時間碼），改單次撰寫、可能被截斷，請開檔檢查完整性。")
+    elif multi and len(ttxt) > CHUNK_THRESHOLD_CHARS:
+        # 決策4：超長合併稿禁純字數切塊（會攔腰切過【來源N：】標頭→模型讀不出在哪源→標錯來源號）。
+        # 本輪不支援依【來源】邊界切塊，強制單次撰寫並警告；純字數切塊只在單源/av 長檔沿用。
+        log("  ⚠ 超長合併檔·跨源綜合可能退化：改單次撰寫（未做純字數切塊，以免切過來源標頭導致標錯號），請開檔檢查完整性。")
     return _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=doc)
 
 
@@ -984,7 +1032,11 @@ def start_gui():
     relogin_btn.grid(row=0, column=5, padx=(0, 8))
     index_btn = ctk.CTkButton(act, text="📚 知識總覽", font=F["small"], height=40, corner_radius=10,
                               fg_color=NAVY, hover_color=NAVY_HOVER, width=112)
-    index_btn.grid(row=0, column=6, sticky="e")
+    index_btn.grid(row=0, column=6, padx=(0, 8))
+    review_btn = ctk.CTkButton(act, text="🧠 每日回顧", font=F["small"], height=40, corner_radius=10,
+                               fg_color="transparent", hover_color=CARD, border_width=1, border_color=GOLD,
+                               text_color=GOLD, width=112)
+    review_btn.grid(row=0, column=7, sticky="e")
 
     status = ctk.CTkLabel(root, text="就緒", font=F["small"], text_color=TXT_LO, anchor="w",
                           fg_color=DEEP, height=26)
@@ -1253,6 +1305,7 @@ def start_gui():
                 failed.append(short(url, 24))
                 q.put(("itemdone", i, False, f"例外：{str(e)[:20]}"))
         run_build_index()
+        run_build_review(BASE, ctrl)          # 收尾：更新每日回顧（間隔重複）
         q.put(("actions", last_article, last_dir))
         q.put(("done", (ok_n, len(urls), failed)))
 
@@ -1375,6 +1428,13 @@ def start_gui():
         if idx.exists():
             os.startfile(str(idx))
 
+    def open_review():
+        rv = BASE / "review.html"
+        if not rv.exists():
+            run_build_review(BASE)
+        if rv.exists():
+            os.startfile(str(rv))
+
     def do_relogin():
         # 開一個新終端機跑標準登入（claude auth login，subscription）；完成後回 GUI 重按開始即可
         opened = False
@@ -1403,6 +1463,7 @@ def start_gui():
     export_btn.configure(command=on_export)
     obsidian_btn.configure(command=on_send_obsidian)
     index_btn.configure(command=open_index)
+    review_btn.configure(command=open_review)
     relogin_btn.configure(command=do_relogin)
     url_box.focus_set()
 
