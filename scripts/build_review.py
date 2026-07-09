@@ -10,7 +10,7 @@ cardId 存活。
 半衰期：soon=7d／later=14d／someday=28d；每場上限 20 張；回饋二元（記得/忘了）。
 
 用法:
-    python build_review.py [--base "C:\\Users\\<你的帳號>\\Desktop\\YT影片文章"]
+    python build_review.py [--base "桌面\\YT影片文章"]
 """
 import argparse
 import hashlib

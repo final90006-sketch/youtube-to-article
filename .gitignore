@@ -3,3 +3,13 @@ __pycache__/
 *.pyo
 .DS_Store
 Thumbs.db
+
+# --- 個人設定／內部文件：絕不進公開 repo（含真實路徑・PII）---
+# base_path.txt 內含使用者知識庫的絕對路徑；其餘為去識別化排除清單所列內部檔。
+base_path.txt
+00_交接文件*
+_render_handoff.py
+finance_tech_lexicon.html
+_backup*/
+.pytest_cache/
+*.bak
