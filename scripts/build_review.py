@@ -10,7 +10,7 @@ cardId 存活。
 半衰期：soon=7d／later=14d／someday=28d；每場上限 20 張；回饋二元（記得/忘了）。
 
 用法:
-    python build_review.py [--base "桌面\\YT影片文章"]
+    python build_review.py [--base "C:\\Users\\<你的帳號>\\Desktop\\YT影片文章"]
 """
 import argparse
 import hashlib
@@ -104,15 +104,26 @@ SR_JS = r"""
   var HALFLIFE = {soon:7, later:14, someday:28}, DAY = 86400000;
   var PROMOTE = {"new":"soon", soon:"later", later:"someday", someday:"retired", retired:"retired"};
   function box(s){ return s && s.box ? s.box : "new"; }
+  // 壞/舊 localStorage state 韌性：未知 box（如 legacy／缺欄）收斂到 soon；缺/非數字 last 當 0（極舊＝到期）
+  function nbox(s){
+    var b = box(s);
+    if(b === "new" || b === "retired") return b;
+    return HALFLIFE[b] ? b : "soon";
+  }
+  function nlast(s){ return (s && typeof s.last === "number") ? s.last : 0; }
   function isDue(s, now){
     if(!s) return true;
-    if(s.box === "retired") return false;
-    return (now - s.last) >= HALFLIFE[s.box]*DAY;
+    var b = nbox(s);
+    if(b === "new") return true;
+    if(b === "retired") return false;
+    return (now - nlast(s)) >= HALFLIFE[b]*DAY;
   }
   function p(s, now){
     if(!s) return 0;
-    if(s.box === "retired") return 1;
-    return Math.pow(2, -(now - s.last)/(HALFLIFE[s.box]*DAY));
+    var b = nbox(s);
+    if(b === "new") return 0;
+    if(b === "retired") return 1;
+    return Math.pow(2, -(now - nlast(s))/(HALFLIFE[b]*DAY));
   }
   function due(cards, states, now, cap){
     cap = cap || 20;
@@ -121,8 +132,8 @@ SR_JS = r"""
     return arr.slice(0, cap);
   }
   function apply(s, remembered, now){
-    var nb = remembered ? PROMOTE[box(s)] : "soon";
-    var hist = (s && s.hist ? s.hist.slice() : []);
+    var nb = remembered ? (PROMOTE[box(s)] || "soon") : "soon";     // 未知 box 的 PROMOTE undefined → soon（不寫 box:undefined）
+    var hist = (s && Array.isArray(s.hist)) ? s.hist.slice() : [];  // 壞 hist（非陣列）→ 空陣列，避免 .push 崩
     hist.push({t: now, r: remembered?1:0});
     if(hist.length > 10) hist = hist.slice(-10);
     return {box: nb, last: now, hist: hist};
@@ -133,8 +144,10 @@ SR_JS = r"""
     for(var i=0;i<cards.length;i++){
       var s = states[cards[i].id];
       if(!s) return 0;                       // 有 new 卡＝今天就有
-      if(s.box === "retired") continue;
-      var remain = HALFLIFE[s.box]*DAY - (now - s.last);
+      var b = nbox(s);
+      if(b === "new") return 0;              // 缺 box 的壞 state＝當新卡，今天就有
+      if(b === "retired") continue;
+      var remain = HALFLIFE[b]*DAY - (now - nlast(s));
       if(remain <= 0) return 0;
       if(remain < best) best = remain;
     }

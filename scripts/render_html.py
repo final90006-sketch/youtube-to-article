@@ -63,7 +63,7 @@ def _circled_to_int(s):
 # ---------------------------------------------------------------------------
 def make_inline(video_url, src_ids=None):
     ts_re = re.compile(TS_PAT)
-    cite_re = re.compile(r"（來源([①-⑳]|[0-9]+)）")   # 只吃單一圈號｜純數字串；混合 token（如①2）不匹配→原樣純文字降級，不進 _circled_to_int
+    cite_re = re.compile(r"（來源([①-⑳]|[0-9]{1,4})）")   # 只吃單一圈號｜1-4位純數字（來源號 9999 綽綽有餘）；混合 token（如①2）或超長數字皆不匹配→原樣純文字降級，不進 _circled_to_int（避開 int_max_str_digits 崩潰）
     link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
     code_re = re.compile(r"`([^`]+)`")
     bold_re = re.compile(r"\*\*([^*]+)\*\*")
@@ -104,7 +104,10 @@ def make_inline(video_url, src_ids=None):
         text = ts_re.sub(ts_sub, text)
         if src_ids:                                   # 空/None → 整條 cite 正則不套（av/單源短路，位元組零回歸）
             def cite_sub(m):
-                n = _circled_to_int(m.group(1))
+                try:
+                    n = _circled_to_int(m.group(1))
+                except ValueError:
+                    return m.group(0)                 # 兜底：極端數字撞 int_max_str_digits → 原樣純文字降級，不崩
                 if n in src_ids:
                     return f'<a class="cite" href="#src-{n}">{m.group(0)}</a>'
                 return m.group(0)                     # 越界來源號 → 原樣純文字，不生死錨點

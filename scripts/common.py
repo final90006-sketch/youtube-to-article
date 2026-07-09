@@ -24,11 +24,15 @@ from pathlib import Path
 def resolve_base():
     """知識庫 base：優先讀技能根的 base_path.txt（可設定、防搬動漂移），否則退回舊預設。"""
     import os
-    cfg = Path(__file__).resolve().parent.parent / "base_path.txt"   # 技能根（scripts 的上一層）
-    if cfg.exists():
-        p = cfg.read_text(encoding="utf-8").strip()
-        if p:
-            return Path(os.path.expandvars(os.path.expanduser(p)))
+    try:
+        cfg = Path(__file__).resolve().parent.parent / "base_path.txt"   # 技能根（scripts 的上一層）
+        if cfg.exists():
+            # utf-8-sig 吃掉 BOM；再剝除包住路徑的引號與空白（記事本另存／複製貼上常見）
+            p = cfg.read_text(encoding="utf-8-sig").strip().strip('"').strip("'")
+            if p:
+                return Path(os.path.expandvars(os.path.expanduser(p)))
+    except (OSError, UnicodeError):
+        pass                                          # 壞檔／編碼異常→退回舊預設，不炸
     return Path.home() / "Desktop" / "YT影片文章"     # fallback：無 config（如公開 repo）時相容
 
 

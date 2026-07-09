@@ -161,14 +161,16 @@ def _run_fetch_cmd(cmd, log, ctrl):
     return info
 
 
-def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False):
+def build_writer_prompt(meta, transcript_txt, mode, is_asr, doc=False, multi=None):
     title = meta.get("title", "")
     channel = meta.get("channel", "")
     if doc:
         # type=document 變體（P0-2）：無秒級時間軸→不要求時間碼；標題契約／洞察／行動／金句／自我檢核照舊
         # 多來源綜合（P1-1）：--merge 合併稿正文以【來源①②③】分節→multi 時加「綜合重組＋句末標來源號」鐵則；
         # 單源 multi=False→cite_rule／struct_note 皆空字串，靠「\n＋空字串＋\n」重建原「\n\n」→prompt 位元組與改動前完全一致。
-        multi = "【來源" in transcript_txt
+        # multi 由呼叫端以 sources[] 精確判定傳入（單源含「【來源：X】」literal 不誤判）；multi=None 時 fallback 舊 substring 以相容無 sources 的呼叫點。
+        if multi is None:
+            multi = "【來源" in transcript_txt
         cite_rule = ""
         struct_note = ""
         if multi:
@@ -724,9 +726,9 @@ def _prompt_tail(meta, full_ttxt, mode, is_asr, doc=False):
     )
 
 
-def _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=False):
+def _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=False, multi=None):
     log("Claude 正在撰寫精讀文章中…")
-    prompt = build_writer_prompt(meta, ttxt, mode, is_asr, doc=doc)
+    prompt = build_writer_prompt(meta, ttxt, mode, is_asr, doc=doc, multi=multi)
     article, problem, raw, err, rc = _with_heartbeat(
         log, lambda: _attempt_write(prompt, _validate_article, ctrl, log))
     if article is None:
@@ -801,7 +803,7 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
     except Exception:
         ttxt = _segs_to_text(data.get("segments", []))
     # 路由：短片單次（已驗證路徑）；長片分塊（避免單次輸出截斷）；快覽因輸出短不分塊
-    multi = doc and ("【來源" in ttxt)             # 決策4：多來源合併稿（正文含【來源①②③】分節）
+    multi = doc and (len(data.get("sources") or []) >= 2)   # 精確判定：sources[] 是 Task1（--merge）產物、≥2 才是多來源；單源內文含「【來源：X】」literal 不誤判（避免誤加 citation＋放棄單源分塊→截斷）
     if mode != "快覽" and len(ttxt) > CHUNK_THRESHOLD_CHARS and not multi:
         segments = data.get("segments", [])
         chapters = data.get("chapters") or []
@@ -826,7 +828,7 @@ def write_article_via_claude(out_dir, mode, log, ctrl=None):
         # 決策4：超長合併稿禁純字數切塊（會攔腰切過【來源N：】標頭→模型讀不出在哪源→標錯來源號）。
         # 本輪不支援依【來源】邊界切塊，強制單次撰寫並警告；純字數切塊只在單源/av 長檔沿用。
         log("  ⚠ 超長合併檔·跨源綜合可能退化：改單次撰寫（未做純字數切塊，以免切過來源標頭導致標錯號），請開檔檢查完整性。")
-    return _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=doc)
+    return _write_single(out, meta, ttxt, mode, is_asr, log, ctrl, doc=doc, multi=multi)
 
 
 REASON_MSG = {
