@@ -24,7 +24,7 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
-from common import TS_PAT, TS_PAT3, hms, resolve_base  # noqa: E402（P0-3 常數收斂）
+from common import TS_PAT, TS_PAT3, hms, resolve_base, _WIN_RESERVED  # noqa: E402（P0-3 常數收斂）
 
 FETCH = SKILL_DIR / "scripts" / "fetch_transcript.py"
 FETCH_DOC = SKILL_DIR / "scripts" / "fetch_document.py"   # 文檔進料口（P0-1）
@@ -72,7 +72,26 @@ def save_cats(cats, last):
 
 def safe_cat(name):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", (name or "").strip()).strip(". ")
+    if name.lower() in _WIN_RESERVED:               # 鏡射 common._WIN_RESERVED，避免 Windows 保留字當分類夾
+        name = "_" + name
     return name or "未分類"
+
+
+def _kill_process_tree(proc, fallback="terminate"):
+    """Windows 先用 taskkill /T 清整棵子行程樹；失敗才退回原本單一行程終止。"""
+    if proc is None:
+        return
+    try:
+        r = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=10, creationflags=NO_WINDOW)
+        if r.returncode == 0:
+            return
+    except Exception:
+        pass
+    try:
+        getattr(proc, fallback)()
+    except Exception:
+        pass
 
 
 def run_build_index(log=lambda s: None):
@@ -284,7 +303,7 @@ def _run_claude_once(prompt, ctrl, timeout=2400):
         return out, err, proc.returncode, False
     except subprocess.TimeoutExpired:
         try:
-            proc.kill()
+            _kill_process_tree(proc, "kill")
             out, err = proc.communicate()          # 收屍，避免殘留行程繼續吃額度
         except Exception:
             out, err = "", ""
@@ -503,8 +522,8 @@ def _fail_log(out, problem, raw, err, rc, log, ctrl):
     try:
         (out / "_write_error.log").write_text(
             f"problem={problem} returncode={rc}\n\n[stdout]\n{raw}\n\n[stderr]\n{err}", encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"  ⚠ 錯誤紀錄寫入失敗：{e}")
     if problem == "CANCELLED":
         return
     if problem == "AUTH":
@@ -576,8 +595,8 @@ def _write_quality_report(out, article, chunks, ttxt, mode, log, doc=False):
             log(f"  ⚠ 完整性審計：{warns} 項警告（詳見 _quality_report.txt）")
         else:
             log("  ✓ 完整性審計通過")
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"  ⚠ 完整性審計失敗：{e}")   # 只報不擋：品質報告失敗絕不中斷文章交付
 
 
 def _finish_article(out, article, ttxt, mode, log, chunks=None, doc=False):
@@ -614,8 +633,8 @@ def _finish_article(out, article, ttxt, mode, log, chunks=None, doc=False):
         try:
             subprocess.run([PY, str(DERIVE), str(out)], capture_output=True, timeout=120,
                            creationflags=NO_WINDOW)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"  ⚠ 衍生格式產生失敗：{e}")
     return True
 
 
@@ -1355,10 +1374,7 @@ def start_gui():
         ctrl["cancel"].set()
         p = ctrl.get("proc")
         if p is not None:
-            try:
-                p.terminate()
-            except Exception:
-                pass
+            _kill_process_tree(p, "terminate")
         cancel_btn.configure(state="disabled", text="取消中…")
         step_lab.configure(text="取消中…（等目前步驟收尾）", text_color=RED)
         status.configure(text="取消中…", text_color=RED)

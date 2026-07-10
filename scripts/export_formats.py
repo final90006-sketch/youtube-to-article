@@ -49,8 +49,16 @@ def fmt_ts(sec, vtt=False):
 
 
 def _cues(segments):
-    segs = [(float(s.get("t", 0) or 0), (s.get("text") or "").strip())
-            for s in segments if (s.get("text") or "").strip()]
+    segs = []
+    for s in segments:
+        txt = (s.get("text") or "").strip()
+        if not txt:
+            continue
+        try:
+            t = float(s.get("t", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        segs.append((t, txt))
     out = []
     for i, (t, txt) in enumerate(segs):
         end = segs[i + 1][0] if i + 1 < len(segs) else t + 4.0
@@ -297,7 +305,12 @@ def main():
     d = Path(args.dir)
     plain = not (args.srt or args.vtt or args.obsidian)   # 未指定格式＝srt/vtt/obsidian 都產
 
-    data = json.loads((d / "transcript.json").read_text(encoding="utf-8"))
+    transcript_ok = True
+    try:
+        data = json.loads((d / "transcript.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        transcript_ok = False
+        data = {}
     segments = data.get("segments", []) or []
     meta = data.get("meta", {}) or {}
     track = data.get("track", {}) or {}
@@ -306,12 +319,14 @@ def main():
     skipped = []
     obsidian_text = None
 
-    if (args.srt or plain) and segments:
+    if (args.srt or plain) and transcript_ok and segments:
         (d / "transcript.srt").write_text(to_srt(segments), encoding="utf-8")
         written.append("transcript.srt")
-    if (args.vtt or plain) and segments:
+    if (args.vtt or plain) and transcript_ok and segments:
         (d / "transcript.vtt").write_text(to_vtt(segments), encoding="utf-8")
         written.append("transcript.vtt")
+    if (args.srt or args.vtt or plain) and not transcript_ok:
+        skipped.append("srt/vtt：缺少或無法讀取 transcript.json，跳過字幕匯出")
     if (args.srt or args.vtt or plain) and not segments and is_doc:
         skipped.append("srt/vtt：document 型無逐字稿 segments，跳過字幕匯出")
     if (args.obsidian or plain or args.vault) and (d / "article.md").exists():
@@ -322,7 +337,10 @@ def main():
         (d / "article.obsidian.md").write_text(obsidian_text, encoding="utf-8-sig")
         written.append("article.obsidian.md")
 
-    result = {"ok": bool(written), "written": written, "dir": str(d)}
+    result = {"ok": bool(written) and transcript_ok, "written": written, "dir": str(d)}
+    if not transcript_ok:
+        result["ok"] = False
+        result["reason"] = "NO_TRANSCRIPT"
     if skipped:
         result["skipped"] = skipped
 

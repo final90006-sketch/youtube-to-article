@@ -50,22 +50,26 @@ def _split_qa(item):
 
 def extract_cards_from_md(md_text):
     """回傳 🧠 自我檢核區塊的 [(問題, 答案), ...]；無該區塊回 []。"""
-    m = _QUIZ_H2.search(md_text)
-    if not m:
+    matches = list(_QUIZ_H2.finditer(md_text))
+    if not matches:
         return []
-    start = m.end()
-    nxt = _H2.search(md_text, start)      # 下一個 h2 為區塊界
-    block = md_text[start: nxt.start() if nxt else len(md_text)]
-    cards = []
-    for line in block.splitlines():
-        s = line.strip()
-        if not re.match(r"^[-*+]\s+", s):
-            continue
-        item = re.sub(r"^[-*+]\s+", "", s).strip()
-        q, a = _split_qa(item)
-        if q:
-            cards.append((q, a))
-    return cards
+    candidates = [m for m in matches if "🧠" in m.group(0)] or list(reversed(matches))
+    for m in candidates:
+        start = m.end()
+        nxt = _H2.search(md_text, start)      # 下一個 h2 為區塊界
+        block = md_text[start: nxt.start() if nxt else len(md_text)]
+        cards = []
+        for line in block.splitlines():
+            s = line.strip()
+            if not re.match(r"^[-*+]\s+", s):
+                continue
+            item = re.sub(r"^[-*+]\s+", "", s).strip()
+            q, a = _split_qa(item)
+            if q and a:
+                cards.append((q, a))
+        if cards:
+            return cards
+    return []
 
 
 def card_id(href, q):

@@ -13,3 +13,12 @@ finance_tech_lexicon.html
 _backup*/
 .pytest_cache/
 *.bak
+# 內部設計／計畫文件（不進公開 repo）
+設計_*.md
+計畫_*.md
+升級路線圖_*.md
+plan.md
+plan_phase2.md
+# pytest conftest 的暫存目錄（見 scripts/tests/conftest.py）
+.tmp/
+scripts/tests/.tmp/

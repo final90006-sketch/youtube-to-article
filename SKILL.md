@@ -94,10 +94,11 @@ python "<技能資料夾>\scripts\build_review.py"
 python "<技能資料夾>\scripts\fetch_document.py" "<檔路徑或文章URL>" --base "桌面\YT影片文章"
 ```
 
-- 吃本機 **PDF／md／txt／docx** 或**網頁文章 URL**，可混合多個輸入。
+- 吃本機 **PDF／md／txt／docx** 或**網頁文章 URL**，可混合多個輸入。（網頁抽正文：有裝 `trafilatura` 就用它、品質較好；沒裝走內建 stdlib 退路，仍可用。）
 - **多來源綜合（`--merge`）**：把多份輸入合併成單一文章 → 全部進單一夾，`transcript.txt` 以 `【來源①：<名稱>】` 分節標明各段出處（`--title "合併標題"` 指定合併後標題；不給時為「首檔標題 等N份」）。寫文時保留這些 `【來源①…】` 標記，讓合成文章可回溯各段來源。
 - `--private`：敏感內容標記——**不進知識庫 index、不嵌內文、不送 Obsidian vault**（三出口 fail-closed）。私密內容建議 `--out` 到庫外專夾，例如：
   `python … fetch_document.py "機密報告.pdf" --private --out "<你的庫外私密夾>\機密報告__doc-xxxxxxxx"`
+  （不限文檔來源：任何來源的 `transcript.json` 只要在 `meta` 手動加 `"private": true`，`build_index.py` 都會整篇跳過、不入總覽也不嵌內文——影音來源同樣適用。）
 - 其他：`--category 分類`／`--title 標題`／`--date YYYYMMDD`／`--selftest`（自驗）。
 - PDF metadata 若是垃圾標題（`無題 1`／`Untitled`／`*.odt`…）會自動退回檔名；失敗寫夾內 `fetch_error.json`。
 

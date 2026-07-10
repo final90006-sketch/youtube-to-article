@@ -49,7 +49,8 @@ def safe_filename(name, maxlen=80):
     name = re.sub(r"\s+", " ", name)
     name = name.rstrip(". ")
     name = (name[:maxlen].rstrip(". ") or "影片")
-    if name.lower() in _WIN_RESERVED:               # Windows 保留字當資料夾名會 mkdir 失敗
+    # F11：保留字檢查看「第一個點之前」的主檔名——aux.txt / con.md 這類副檔名保留字也要擋
+    if name.split(".")[0].strip().lower() in _WIN_RESERVED:   # Windows 保留字當資料夾名會 mkdir 失敗
         name = "_" + name
     return name
 

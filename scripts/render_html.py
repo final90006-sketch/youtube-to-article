@@ -74,7 +74,7 @@ def make_inline(video_url, src_ids=None):
         if not video_url or not ("youtube.com" in video_url or "youtu.be" in video_url):
             return None
         sep = "&" if "?" in video_url else "?"
-        return f"{video_url}{sep}t={sec}s"
+        return f"{html.escape(video_url)}{sep}t={sec}s"
 
     def inline(text):
         links = []
@@ -387,7 +387,7 @@ def render_transcript(segments, video_url):
             continue
         if yt:
             sep = "&" if "?" in video_url else "?"
-            href = f'{video_url}{sep}t={int(t)}s'
+            href = f'{html.escape(video_url)}{sep}t={int(t)}s'
             rows.append(f'<a class="tx-line" href="{href}" target="_blank" rel="noopener">'
                         f'<span class="tx-t">{hms(t)}</span><span class="tx-x">{txt}</span></a>')
         else:
@@ -799,13 +799,13 @@ def build_page(meta, track, body_html, toc, stats, transcript_html, md_raw, vide
         jump = ""
         if t["secs"] is not None and video_url:
             sep = "&" if "?" in video_url else "?"
-            jump = (f'<a class="toc-jump" href="{video_url}{sep}t={t["secs"]}s" target="_blank" '
+            jump = (f'<a class="toc-jump" href="{html.escape(video_url)}{sep}t={t["secs"]}s" target="_blank" '
                     f'rel="noopener" title="跳到影片 {hms(t["secs"])}">↗</a>')
         toc_rows.append(f'<div class="toc-row"><a class="toc-link" href="#{t["id"]}" '
                         f'data-target="{t["id"]}">{html.escape(t["title"])}</a>{jump}</div>')
     toc_html = "".join(toc_rows) or '<div class="toc-row"><span class="toc-link">（無章節）</span></div>'
 
-    data_json = json.dumps({"md": md_raw, "vid": meta.get("id", ""), "video_url": video_url},
+    data_json = json.dumps({"md": md_raw, "vid": meta.get("id", ""), "video_url": html.escape(video_url)},
                            ensure_ascii=False).replace("</", "<\\/")
 
     # 文檔型（type=document）字樣分流；av 全維持原字面值（零回歸）
