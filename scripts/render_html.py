@@ -61,7 +61,10 @@ def _circled_to_int(s):
 # ---------------------------------------------------------------------------
 # 行內格式
 # ---------------------------------------------------------------------------
-def make_inline(video_url, src_ids=None):
+_TS_SNAP_TOL = 90   # 秒：時間碼與最近真實逐字稿段落起點的容忍差；超過視為模型編造、停用跳轉（防假時間碼點下去跳錯）
+
+
+def make_inline(video_url, src_ids=None, seg_starts=None):
     ts_re = re.compile(TS_PAT)
     cite_re = re.compile(r"（來源([①-⑳]|[0-9]{1,4})）")   # 只吃單一圈號｜1-4位純數字（來源號 9999 綽綽有餘）；混合 token（如①2）或超長數字皆不匹配→原樣純文字降級，不進 _circled_to_int（避開 int_max_str_digits 崩潰）
     link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -96,7 +99,12 @@ def make_inline(video_url, src_ids=None):
 
         def ts_sub(m):
             ts = m.group(1)
-            url = build_ts(ts_to_seconds(ts))
+            sec = ts_to_seconds(ts)
+            if seg_starts:                             # 有真實逐字稿段落 → 驗證時間碼對不對得上（防模型自由生成假時間碼）
+                nearest = min(seg_starts, key=lambda s: abs(s - sec))
+                if abs(sec - nearest) > _TS_SNAP_TOL:  # 離所有真實段落都超過容忍 → 疑似編造，停用跳轉、只留純標記
+                    return f'<span class="ts ts-flat" title="時間碼與逐字稿對不上，已停用跳轉">{ts}</span>'
+            url = build_ts(sec)                        # 可信（或無逐字稿的 document 型）→ 秒數不動，av 位元組零回歸
             if url:
                 return f'<a class="ts" href="{url}" target="_blank" rel="noopener">{ts}</a>'
             return f'<span class="ts ts-flat">{ts}</span>'
@@ -162,8 +170,8 @@ def quote_card(text_md, inline):
 # ---------------------------------------------------------------------------
 # Markdown → HTML（單趟掃描，依標題名分流；回傳 body, toc, stats）
 # ---------------------------------------------------------------------------
-def md_to_html(md, video_url, src_ids=None):
-    inline = make_inline(video_url, src_ids)
+def md_to_html(md, video_url, src_ids=None, seg_starts=None):
+    inline = make_inline(video_url, src_ids, seg_starts)
     lines = md.replace("\r\n", "\n").split("\n")
     out = []
     toc = []
@@ -890,7 +898,8 @@ def main():
 
     sources = data.get("sources", [])                 # 多來源綜合：僅 merge 產出此頂層 key；av/單源無 → 全短路
     src_ids = {s["n"] for s in sources}
-    body_html, toc, stats, doc_title = md_to_html(md, video_url, src_ids)
+    seg_starts = sorted({int(s.get("t", 0)) for s in segments if (s.get("text") or "").strip()})
+    body_html, toc, stats, doc_title = md_to_html(md, video_url, src_ids, seg_starts)
     transcript_html = render_transcript(segments, video_url)
     sources_html = render_sources(sources)
     page = build_page(meta, track, body_html, toc, stats, transcript_html, md, video_url, doc_title,
